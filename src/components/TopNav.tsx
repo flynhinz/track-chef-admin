@@ -1,0 +1,29 @@
+import { useNavigate, useLocation } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import { useEffect, useState } from 'react'
+
+export default function TopNav() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [email, setEmail] = useState('')
+  useEffect(() => { supabase.auth.getSession().then(({ data }) => { setEmail(data.session?.user?.email ?? '') }) }, [])
+  const signOut = async () => { await supabase.auth.signOut(); navigate('/') }
+  const navItem = (path: string, label: string) => (
+    <button onClick={() => navigate(path)} style={{ background: 'none', border: 'none', color: location.pathname === path ? '#DC2626' : '#F5F5F5', cursor: 'pointer', fontSize: 14, padding: '4px 12px', borderBottom: location.pathname === path ? '2px solid #DC2626' : '2px solid transparent', fontWeight: location.pathname === path ? 600 : 400 }}>{label}</button>
+  )
+  return (
+    <nav style={{ background: '#141414', borderBottom: '1px solid #2A2A2A', padding: '0 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ width: 28, height: 28, background: '#DC2626', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: 'white' }}>i6</div>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>i6MM Platform Admin</span>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>{navItem('/dashboard', 'Dashboard')}{navItem('/tenants', 'Tenants')}{navItem('/users', 'Users')}</div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <span style={{ fontSize: 12, color: '#888' }}>{email}</span>
+        <button onClick={signOut} style={{ background: 'none', border: '1px solid #2A2A2A', color: '#888', cursor: 'pointer', fontSize: 12, padding: '4px 12px', borderRadius: 4 }}>Sign Out</button>
+      </div>
+    </nav>
+  )
+}
