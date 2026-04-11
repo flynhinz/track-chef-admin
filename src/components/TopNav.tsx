@@ -15,10 +15,13 @@ export default function TopNav() {
     <nav style={{ background: '#141414', borderBottom: '1px solid #2A2A2A', padding: '0 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 56 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 28, height: 28, background: '#DC2626', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: 'white' }}>i6</div>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>i6MM Platform Admin</span>
+          <div style={{ width: 28, height: 28, background: '#DC2626', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: 'white' }}>TC</div>
+          <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>Track-Chef Admin</span>
+            <span style={{ fontSize: 10, color: '#888' }}>Motorsport Mastered</span>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>{navItem('/dashboard', 'Dashboard')}{navItem('/tenants', 'Tenants')}{navItem('/users', 'Users')}</div>
+        <div style={{ display: 'flex', gap: 4 }}>{navItem('/dashboard', 'Dashboard')}{navItem('/tenants', 'Tenants')}{navItem('/users', 'Users')}{navItem('/builds', 'Builds')}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
         <span style={{ fontSize: 12, color: '#888' }}>{email}</span>

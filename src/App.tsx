@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import TenantsPage from './pages/TenantsPage'
 import UsersPage from './pages/UsersPage'
+import BuildsPage from './pages/BuildsPage'
 import TopNav from './components/TopNav'
 
 const queryClient = new QueryClient()
@@ -62,6 +63,7 @@ export default function App() {
           <Route path='/dashboard' element={<ProtectedRoute><AdminLayout><DashboardPage /></AdminLayout></ProtectedRoute>} />
           <Route path='/tenants' element={<ProtectedRoute><AdminLayout><TenantsPage /></AdminLayout></ProtectedRoute>} />
           <Route path='/users' element={<ProtectedRoute><AdminLayout><UsersPage /></AdminLayout></ProtectedRoute>} />
+          <Route path='/builds' element={<ProtectedRoute><AdminLayout><BuildsPage /></AdminLayout></ProtectedRoute>} />
           <Route path='*' element={<Navigate to='/' replace />} />
         </Routes>
       </BrowserRouter>
