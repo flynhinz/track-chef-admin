@@ -1,6 +1,6 @@
 # i6MM Platform Admin
 
-Track-Chef administration portal — super-admin tools for managing tenants, users, and platform-wide operations.
+Track-Chef administration portal — super-admin tools for managing tenants, users, and platform-wide operations.    
 
 ## Setup
 
