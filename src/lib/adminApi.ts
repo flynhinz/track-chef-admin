@@ -1,8 +1,10 @@
 import { getToken } from './supabase'
 const FUNCTION_URL = import.meta.env.VITE_SUPABASE_ADMIN_FUNCTION_URL
+const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 async function callAdmin(action: string, payload?: Record<string, unknown>) {
   const token = await getToken()
-  const res = await fetch(FUNCTION_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ action, payload }) })
+  if (!token) throw new Error('Not authenticated')
+  const res = await fetch(FUNCTION_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}`, 'apikey': ANON_KEY }, body: JSON.stringify({ action, payload }) })
   if (!res.ok) {
     let body: any = null
     try { body = await res.json() } catch { /* ignore */ }
