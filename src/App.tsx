@@ -7,6 +7,9 @@ import DashboardPage from './pages/DashboardPage'
 import TenantsPage from './pages/TenantsPage'
 import UsersPage from './pages/UsersPage'
 import BuildsPage from './pages/BuildsPage'
+import TelemetryPage from './pages/TelemetryPage'
+import UsagePage from './pages/UsagePage'
+import SqlPage from './pages/SqlPage'
 import TopNav from './components/TopNav'
 
 const queryClient = new QueryClient()
@@ -21,6 +24,23 @@ function AdminLayout({ children }: { children: React.ReactNode }) {
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const [checking, setChecking] = useState(true)
+  const [allowed, setAllowed] = useState(false)
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!data.session) { setChecking(false); return }
+      const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('user_id', data.session.user.id).single()
+      setAllowed(!!profile?.is_super_admin)
+      setChecking(false)
+    })
+  }, [])
+  if (checking) return <div style={{ padding: 40, color: '#888' }}>Checking access...</div>
+  if (!allowed) return <Navigate to='/' replace />
+  return <>{children}</>
+}
+
+// SQL console keeps its own is_super_admin check so it stays gated even if ProtectedRoute is ever loosened.
+function SuperAdminRoute({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true)
   const [allowed, setAllowed] = useState(false)
   useEffect(() => {
@@ -64,6 +84,9 @@ export default function App() {
           <Route path='/tenants' element={<ProtectedRoute><AdminLayout><TenantsPage /></AdminLayout></ProtectedRoute>} />
           <Route path='/users' element={<ProtectedRoute><AdminLayout><UsersPage /></AdminLayout></ProtectedRoute>} />
           <Route path='/builds' element={<ProtectedRoute><AdminLayout><BuildsPage /></AdminLayout></ProtectedRoute>} />
+          <Route path='/telemetry' element={<ProtectedRoute><AdminLayout><TelemetryPage /></AdminLayout></ProtectedRoute>} />
+          <Route path='/usage' element={<ProtectedRoute><AdminLayout><UsagePage /></AdminLayout></ProtectedRoute>} />
+          <Route path='/sql' element={<SuperAdminRoute><AdminLayout><SqlPage /></AdminLayout></SuperAdminRoute>} />
           <Route path='*' element={<Navigate to='/' replace />} />
         </Routes>
       </BrowserRouter>

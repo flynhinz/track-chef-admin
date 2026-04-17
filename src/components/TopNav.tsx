@@ -21,7 +21,15 @@ export default function TopNav() {
             <span style={{ fontSize: 10, color: '#888' }}>Motorsport Mastered</span>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>{navItem('/dashboard', 'Dashboard')}{navItem('/tenants', 'Tenants')}{navItem('/users', 'Users')}{navItem('/builds', 'Builds')}</div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {navItem('/dashboard', 'Dashboard')}
+          {navItem('/tenants', 'Tenants')}
+          {navItem('/users', 'Users')}
+          {navItem('/builds', 'Builds')}
+          {navItem('/telemetry', 'Telemetry')}
+          {navItem('/usage', 'Usage')}
+          {navItem('/sql', 'SQL')}
+        </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
         <span style={{ fontSize: 12, color: '#888' }}>{email}</span>
