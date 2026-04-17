@@ -11,14 +11,18 @@ import TelemetryPage from './pages/TelemetryPage'
 import UsagePage from './pages/UsagePage'
 import SqlPage from './pages/SqlPage'
 import TopNav from './components/TopNav'
+import BuildInfo from './components/BuildInfo'
 
 const queryClient = new QueryClient()
 
 function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div style={{ minHeight: '100vh', background: '#0D0D0D' }}>
+    <div style={{ minHeight: '100vh', background: '#0D0D0D', display: 'flex', flexDirection: 'column' }}>
       <TopNav />
-      <main style={{ padding: '32px', maxWidth: '1400px', margin: '0 auto' }}>{children}</main>
+      <main style={{ padding: '32px', maxWidth: '1400px', margin: '0 auto', width: '100%', flex: 1 }}>{children}</main>
+      <footer style={{ borderTop: '1px solid #1A1A1A', padding: '10px 32px', textAlign: 'center' }}>
+        <BuildInfo />
+      </footer>
     </div>
   )
 }
