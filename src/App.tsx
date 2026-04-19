@@ -8,10 +8,13 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import TenantsPage from './pages/TenantsPage'
 import UsersPage from './pages/UsersPage'
+import ContentPage from './pages/ContentPage'
 import BuildsPage from './pages/BuildsPage'
 import TelemetryPage from './pages/TelemetryPage'
 import UsagePage from './pages/UsagePage'
 import SqlPage from './pages/SqlPage'
+import SeriesPage from './pages/SeriesPage'
+import AnnouncementsPage from './pages/AnnouncementsPage'
 import TopNav from './components/TopNav'
 import BuildInfo from './components/BuildInfo'
 
@@ -100,6 +103,9 @@ export default function App() {
           <Route path='/dashboard' element={<ProtectedRoute><AdminLayout><DashboardPage /></AdminLayout></ProtectedRoute>} />
           <Route path='/tenants' element={<ProtectedRoute><AdminLayout><TenantsPage /></AdminLayout></ProtectedRoute>} />
           <Route path='/users' element={<ProtectedRoute><AdminLayout><UsersPage /></AdminLayout></ProtectedRoute>} />
+          <Route path='/content' element={<ProtectedRoute><AdminLayout><ContentPage /></AdminLayout></ProtectedRoute>} />
+          <Route path='/series' element={<ProtectedRoute><AdminLayout><SeriesPage /></AdminLayout></ProtectedRoute>} />
+          <Route path='/announcements' element={<ProtectedRoute><AdminLayout><AnnouncementsPage /></AdminLayout></ProtectedRoute>} />
           <Route path='/builds' element={<ProtectedRoute><AdminLayout><BuildsPage /></AdminLayout></ProtectedRoute>} />
           <Route path='/telemetry' element={<ProtectedRoute><AdminLayout><TelemetryPage /></AdminLayout></ProtectedRoute>} />
           <Route path='/usage' element={<ProtectedRoute><AdminLayout><UsagePage /></AdminLayout></ProtectedRoute>} />

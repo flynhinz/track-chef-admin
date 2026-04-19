@@ -25,6 +25,10 @@ export default function TopNav() {
           {navItem('/dashboard', 'Dashboard')}
           {navItem('/tenants', 'Tenants')}
           {navItem('/users', 'Users')}
+          {/* [BUG-293] Content = Rowena's Help Centre editor (persona_content_translations). */}
+          {navItem('/content', 'Content')}
+          {navItem('/series', 'Series')}
+          {navItem('/announcements', 'Announcements')}
           {navItem('/builds', 'Builds')}
           {navItem('/telemetry', 'Telemetry')}
           {navItem('/usage', 'Usage')}

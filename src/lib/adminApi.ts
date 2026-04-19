@@ -41,6 +41,21 @@ export async function verifySuperAdmin(): Promise<boolean> {
   }
 }
 
+// [BUG-293] Help-Centre article shape returned by list_help_articles —
+// flattened join of persona_content_translations + persona_content.
+export interface HelpArticle {
+  id: string              // translation row id (target of update_help_article)
+  content_id: string      // FK → persona_content.id
+  persona_id: string | null
+  content_type: string | null
+  slug: string | null
+  language_code: string
+  title: string
+  body: string
+  status: string
+  updated_at: string | null
+}
+
 export interface BuildBug { id: string; bug_ref: string; description: string | null; fixed_confirmed: boolean; confirmed_at: string | null }
 export interface BuildTestRun { id: string; kind: 'unit' | 'regression' | 'e2e'; total: number; passed: number; failed: number; skipped: number; commit_hash: string | null; details_url: string | null; created_at: string }
 export interface Build { id: string; build_ref: string; title: string; notes: string | null; status: 'open' | 'testing' | 'verified' | 'rejected'; created_at: string; admin_build_bugs: BuildBug[]; latest_test_runs?: Partial<Record<'unit' | 'regression' | 'e2e', BuildTestRun>> }
@@ -63,4 +78,8 @@ export const adminApi = {
   runSql: (sql: string): Promise<{ kind: 'rows'; rows: Record<string, unknown>[] } | { kind: 'command'; command: string; affected: number } | { kind: 'error'; error: string; sqlstate?: string }> => callAdmin('run_sql', { sql }),
   reportTestRun: (p: { build_ref: string; kind: 'unit' | 'regression' | 'e2e'; total: number; passed: number; failed: number; skipped?: number; commit_hash?: string; details_url?: string }) => callAdmin('report_test_run', p),
   listTestRuns: (build_id?: string): Promise<BuildTestRun[]> => callAdmin('list_test_runs', build_id ? { build_id } : {}),
+  // [BUG-293] Help Centre management.
+  listHelpArticles: (): Promise<HelpArticle[]> => callAdmin('list_help_articles'),
+  updateHelpArticle: (p: { id: string; title: string; body: string }): Promise<HelpArticle> =>
+    callAdmin('update_help_article', p),
 }
