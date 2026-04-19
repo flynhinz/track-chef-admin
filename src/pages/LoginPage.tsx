@@ -3,7 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 // [BUG-292] Route the is_super_admin check through the admin-query EF
 // (service role) instead of the anon client (RLS-gated).
-import { verifySuperAdmin } from '../lib/adminApi'
+// [BUG-292 follow-up] Use the detailed variant so we can surface the
+// specific deny reason (misconfigured env, 403, network, etc.) instead
+// of showing a generic "Access denied" for every failure mode.
+import { superAdminDenyMessage, verifySuperAdminDetail } from '../lib/adminApi'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -14,10 +17,20 @@ export default function LoginPage() {
 
   const signIn = async () => {
     setLoading(true); setError('')
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) { setError(error.message); setLoading(false); return }
-    const ok = await verifySuperAdmin()
-    if (!ok) { await supabase.auth.signOut(); setError('Access denied. Authorised administrators only.'); setLoading(false); return }
+    // [BUG-292 follow-up] Pass the freshly-issued access token directly
+    // so the verification doesn't race supabase.auth.getSession() —
+    // persistSession writes can lag by a few ms and getSession() then
+    // returns null, producing a silent "no-token" deny.
+    const token = data.session?.access_token ?? null
+    const check = await verifySuperAdminDetail(token)
+    if (!check.ok) {
+      await supabase.auth.signOut()
+      setError(superAdminDenyMessage(check))
+      setLoading(false)
+      return
+    }
     navigate('/dashboard')
   }
 

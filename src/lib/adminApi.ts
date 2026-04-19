@@ -20,24 +20,95 @@ async function callAdmin(action: string, payload?: Record<string, unknown>) {
 // admin-query EF instead: the EF's gate already runs with the service
 // client, so a 2xx response means the caller IS a super admin.
 //
-// Returns `false` on no session, auth failure (401), forbidden (403),
-// or any other non-ok response — callers can treat `false` as "deny".
-export async function verifySuperAdmin(): Promise<boolean> {
-  const token = await getToken()
-  if (!token) return false
+// [BUG-292 follow-up] The first cut returned `false` silently for both
+//   a) race condition (signInWithPassword resolved but getSession hasn't
+//      written the token yet) and
+//   b) VITE_SUPABASE_ADMIN_FUNCTION_URL missing in the Cloudflare Pages
+//      environment,
+// so an operator staring at "Access denied" had no way to tell which.
+//
+// verifySuperAdminDetail returns the specific reason for the UI to
+// surface; the thin boolean wrapper is preserved for the two route
+// guards that only care about the allow/deny bit.
+export type SuperAdminDenyReason =
+  | 'no-url'        // VITE_SUPABASE_ADMIN_FUNCTION_URL missing in env
+  | 'no-token'      // no valid session token available
+  | 'forbidden'     // EF returned 401/403 — JWT mismatch or not super admin
+  | 'http-error'    // EF returned a non-2xx that isn't auth-scoped
+  | 'network'       // fetch threw (no network, CORS, etc.)
+
+export type SuperAdminCheck =
+  | { ok: true }
+  | { ok: false; reason: SuperAdminDenyReason; status?: number; body?: string }
+
+async function postVerify(token: string): Promise<Response> {
+  return fetch(FUNCTION_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'apikey': ANON_KEY,
+    },
+    body: JSON.stringify({ action: 'verify_super_admin', payload: {} }),
+  })
+}
+
+/**
+ * Detailed verification — exposes the specific reason for a deny so the
+ * UI can tell "no env var" from "not a super admin" from "network dropped".
+ * Accepts an optional explicit token to skip the getSession round-trip
+ * (callers that just completed signInWithPassword can pass the fresh
+ * access_token directly, avoiding the persistSession write race).
+ */
+export async function verifySuperAdminDetail(
+  explicitToken?: string | null,
+): Promise<SuperAdminCheck> {
+  if (!FUNCTION_URL) {
+    console.warn('[verifySuperAdmin] VITE_SUPABASE_ADMIN_FUNCTION_URL is not set')
+    return { ok: false, reason: 'no-url' }
+  }
+  const token = (explicitToken ?? '').trim() || (await getToken())
+  if (!token) {
+    console.warn('[verifySuperAdmin] no session token available')
+    return { ok: false, reason: 'no-token' }
+  }
   try {
-    const res = await fetch(FUNCTION_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'apikey': ANON_KEY,
-      },
-      body: JSON.stringify({ action: 'verify_super_admin', payload: {} }),
-    })
-    return res.ok
-  } catch {
-    return false
+    const res = await postVerify(token)
+    if (res.ok) return { ok: true }
+    let body = ''
+    try { body = (await res.text()).slice(0, 300) } catch { /* ignore */ }
+    const reason: SuperAdminDenyReason =
+      res.status === 401 || res.status === 403 ? 'forbidden' : 'http-error'
+    console.warn('[verifySuperAdmin] denied:', { status: res.status, body })
+    return { ok: false, reason, status: res.status, body }
+  } catch (e) {
+    console.warn('[verifySuperAdmin] network error:', e)
+    return { ok: false, reason: 'network' }
+  }
+}
+
+/** Boolean wrapper — unchanged contract for route guards. */
+export async function verifySuperAdmin(explicitToken?: string | null): Promise<boolean> {
+  const r = await verifySuperAdminDetail(explicitToken)
+  return r.ok
+}
+
+/** Human-friendly message for the deny banner. */
+export function superAdminDenyMessage(check: SuperAdminCheck): string {
+  if (check.ok) return ''
+  switch (check.reason) {
+    case 'no-url':
+      return 'Admin portal is misconfigured — VITE_SUPABASE_ADMIN_FUNCTION_URL is missing. Contact an administrator.'
+    case 'no-token':
+      return 'Session unavailable. Please sign in again.'
+    case 'forbidden':
+      return 'Access denied. Authorised administrators only.'
+    case 'http-error':
+      return `Admin API returned ${check.status ?? '?'}. Please try again.`
+    case 'network':
+      return 'Network error contacting the admin API. Check your connection and try again.'
+    default:
+      return 'Access denied.'
   }
 }
 
