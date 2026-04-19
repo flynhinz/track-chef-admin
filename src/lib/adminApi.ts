@@ -13,6 +13,34 @@ async function callAdmin(action: string, payload?: Record<string, unknown>) {
   return res.json()
 }
 
+// [BUG-292] The admin UI used to check is_super_admin via a direct
+// `.from('profiles')` query — that hits the anon client + RLS, which
+// refuses reads on other users' rows and occasionally on the caller's
+// own row when the session is mid-refresh. Route the check through the
+// admin-query EF instead: the EF's gate already runs with the service
+// client, so a 2xx response means the caller IS a super admin.
+//
+// Returns `false` on no session, auth failure (401), forbidden (403),
+// or any other non-ok response — callers can treat `false` as "deny".
+export async function verifySuperAdmin(): Promise<boolean> {
+  const token = await getToken()
+  if (!token) return false
+  try {
+    const res = await fetch(FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'apikey': ANON_KEY,
+      },
+      body: JSON.stringify({ action: 'verify_super_admin', payload: {} }),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 export interface BuildBug { id: string; bug_ref: string; description: string | null; fixed_confirmed: boolean; confirmed_at: string | null }
 export interface BuildTestRun { id: string; kind: 'unit' | 'regression' | 'e2e'; total: number; passed: number; failed: number; skipped: number; commit_hash: string | null; details_url: string | null; created_at: string }
 export interface Build { id: string; build_ref: string; title: string; notes: string | null; status: 'open' | 'testing' | 'verified' | 'rejected'; created_at: string; admin_build_bugs: BuildBug[]; latest_test_runs?: Partial<Record<'unit' | 'regression' | 'e2e', BuildTestRun>> }

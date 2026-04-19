@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { supabase, supabaseConfigured } from './lib/supabase'
+// [BUG-292] Replaces the direct .from('profiles') RLS-gated check.
+import { verifySuperAdmin } from './lib/adminApi'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import TenantsPage from './pages/TenantsPage'
@@ -31,12 +33,18 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true)
   const [allowed, setAllowed] = useState(false)
   useEffect(() => {
+    let cancelled = false
     supabase.auth.getSession().then(async ({ data }) => {
+      if (cancelled) return
       if (!data.session) { setChecking(false); return }
-      const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('user_id', data.session.user.id).single()
-      setAllowed(!!profile?.is_super_admin)
+      // [BUG-292] Route via admin-query EF (service role) instead of a
+      // direct profiles query (anon client, RLS-gated).
+      const ok = await verifySuperAdmin()
+      if (cancelled) return
+      setAllowed(ok)
       setChecking(false)
     })
+    return () => { cancelled = true }
   }, [])
   if (checking) return <div style={{ padding: 40, color: '#888' }}>Checking access...</div>
   if (!allowed) return <Navigate to='/' replace />
@@ -48,12 +56,17 @@ function SuperAdminRoute({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true)
   const [allowed, setAllowed] = useState(false)
   useEffect(() => {
+    let cancelled = false
     supabase.auth.getSession().then(async ({ data }) => {
+      if (cancelled) return
       if (!data.session) { setChecking(false); return }
-      const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('user_id', data.session.user.id).single()
-      setAllowed(!!profile?.is_super_admin)
+      // [BUG-292] Route via admin-query EF (service role).
+      const ok = await verifySuperAdmin()
+      if (cancelled) return
+      setAllowed(ok)
       setChecking(false)
     })
+    return () => { cancelled = true }
   }, [])
   if (checking) return <div style={{ padding: 40, color: '#888' }}>Checking access...</div>
   if (!allowed) return <Navigate to='/' replace />

@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+// [BUG-292] Route the is_super_admin check through the admin-query EF
+// (service role) instead of the anon client (RLS-gated).
+import { verifySuperAdmin } from '../lib/adminApi'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -11,10 +14,10 @@ export default function LoginPage() {
 
   const signIn = async () => {
     setLoading(true); setError('')
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) { setError(error.message); setLoading(false); return }
-    const { data: profile } = await supabase.from('profiles').select('is_super_admin').eq('user_id', data.user.id).single()
-    if (!profile?.is_super_admin) { await supabase.auth.signOut(); setError('Access denied. Authorised administrators only.'); setLoading(false); return }
+    const ok = await verifySuperAdmin()
+    if (!ok) { await supabase.auth.signOut(); setError('Access denied. Authorised administrators only.'); setLoading(false); return }
     navigate('/dashboard')
   }
 
