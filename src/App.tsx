@@ -15,6 +15,7 @@ import UsagePage from './pages/UsagePage'
 import SqlPage from './pages/SqlPage'
 import SeriesPage from './pages/SeriesPage'
 import AnnouncementsPage from './pages/AnnouncementsPage'
+import DebugConsolePage from './pages/DebugConsolePage'
 import TopNav from './components/TopNav'
 import BuildInfo from './components/BuildInfo'
 
@@ -110,6 +111,7 @@ export default function App() {
           <Route path='/telemetry' element={<ProtectedRoute><AdminLayout><TelemetryPage /></AdminLayout></ProtectedRoute>} />
           <Route path='/usage' element={<ProtectedRoute><AdminLayout><UsagePage /></AdminLayout></ProtectedRoute>} />
           <Route path='/sql' element={<SuperAdminRoute><AdminLayout><SqlPage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/debug' element={<SuperAdminRoute><AdminLayout><DebugConsolePage /></AdminLayout></SuperAdminRoute>} />
           <Route path='*' element={<Navigate to='/' replace />} />
         </Routes>
       </BrowserRouter>

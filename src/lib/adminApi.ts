@@ -153,4 +153,29 @@ export const adminApi = {
   listHelpArticles: (): Promise<HelpArticle[]> => callAdmin('list_help_articles'),
   updateHelpArticle: (p: { id: string; title: string; body: string }): Promise<HelpArticle> =>
     callAdmin('update_help_article', p),
+  // [EPIC-149] EF Debug Console — log viewer + verbose toggles.
+  listEfLogs: (p?: { function_slug?: string; level?: 'info' | 'warn' | 'error' | 'debug'; session_id?: string; since?: string; limit?: number }): Promise<EfLog[]> =>
+    callAdmin('list_ef_logs', p ?? {}),
+  clearEfLogs: (p?: { function_slug?: string }): Promise<{ success: boolean; deleted: number | null; scope: string }> =>
+    callAdmin('clear_ef_logs', p ?? {}),
+  toggleEfVerbose: (function_slug: string, verbose_enabled: boolean): Promise<EfConfig> =>
+    callAdmin('toggle_ef_verbose', { function_slug, verbose_enabled }),
+  listEfConfig: (): Promise<EfConfig[]> => callAdmin('list_ef_config'),
+}
+
+// [EPIC-149] EF log row returned by list_ef_logs and pushed by realtime.
+export interface EfLog {
+  id: string
+  function_slug: string
+  level: 'info' | 'warn' | 'error' | 'debug'
+  message: string
+  payload: Record<string, unknown> | null
+  session_id: string | null
+  created_at: string
+}
+
+export interface EfConfig {
+  function_slug: string
+  verbose_enabled: boolean
+  updated_at: string | null
 }

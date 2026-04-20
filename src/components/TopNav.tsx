@@ -33,6 +33,7 @@ export default function TopNav() {
           {navItem('/telemetry', 'Telemetry')}
           {navItem('/usage', 'Usage')}
           {navItem('/sql', 'SQL')}
+          {navItem('/debug', 'Debug')}
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
