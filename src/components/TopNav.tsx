@@ -23,8 +23,12 @@ export default function TopNav() {
         </div>
         <div style={{ display: 'flex', gap: 4 }}>
           {navItem('/dashboard', 'Dashboard')}
-          {navItem('/tenants', 'Tenants')}
-          {navItem('/users', 'Users')}
+          {/* [BUG-317 #4] Tenants page now subsumes the old Users tab —
+              tenants list with expandable rows that reveal users inline,
+              both levels searchable + sortable. The /users route stays
+              registered for deep-links from external links that still
+              carry ?tenant=<id>. */}
+          {navItem('/tenants', 'Tenants & Users')}
           {/* [BUG-293] Content = Rowena's Help Centre editor (persona_content_translations). */}
           {navItem('/content', 'Content')}
           {navItem('/series', 'Series')}

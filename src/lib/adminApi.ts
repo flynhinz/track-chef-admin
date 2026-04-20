@@ -112,6 +112,23 @@ export function superAdminDenyMessage(check: SuperAdminCheck): string {
   }
 }
 
+// [BUG-317] Platform-wide round_communications row for the Announcements tab.
+export interface AdminAnnouncement {
+  id: string
+  tenant_id: string | null
+  event_id: string | null
+  series_id: string | null
+  subject: string | null
+  status: string | null
+  sent_at: string | null
+  sent_count: number | null
+  failed_count: number | null
+  created_at: string
+  event_name: string | null
+  series_name: string | null
+  tenant_name: string | null
+}
+
 // [BUG-293] Help-Centre article shape returned by list_help_articles —
 // flattened join of persona_content_translations + persona_content.
 export interface HelpArticle {
@@ -153,6 +170,8 @@ export const adminApi = {
   listHelpArticles: (): Promise<HelpArticle[]> => callAdmin('list_help_articles'),
   updateHelpArticle: (p: { id: string; title: string; body: string }): Promise<HelpArticle> =>
     callAdmin('update_help_article', p),
+  // [BUG-317] Platform-wide round_communications view for the Announcements tab.
+  listAnnouncements: (): Promise<AdminAnnouncement[]> => callAdmin('list_announcements'),
   // [EPIC-149] EF Debug Console — log viewer + verbose toggles.
   listEfLogs: (p?: { function_slug?: string; level?: 'info' | 'warn' | 'error' | 'debug'; session_id?: string; since?: string; limit?: number }): Promise<EfLog[]> =>
     callAdmin('list_ef_logs', p ?? {}),

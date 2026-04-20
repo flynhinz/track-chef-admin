@@ -151,12 +151,53 @@ bob@example.com,Bob Jones,EG123456,550e8400-e29b-41d4-a716-446655440000,false`} 
 }
 
 function ResultTable({ rows }: { rows: Record<string, unknown>[] }) {
+  const [copied, setCopied] = useState<'json' | 'csv' | null>(null)
+
+  const copyJson = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(rows, null, 2))
+      setCopied('json')
+      setTimeout(() => setCopied(null), 1500)
+    } catch {
+      /* clipboard blocked — no-op */
+    }
+  }
+
+  const copyCsv = async () => {
+    if (!rows.length) return
+    const cols = Object.keys(rows[0])
+    const esc = (v: unknown): string => {
+      if (v === null || v === undefined) return ''
+      const s = typeof v === 'object' ? JSON.stringify(v) : String(v)
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => esc(r[c])).join(','))].join('\n')
+    try {
+      await navigator.clipboard.writeText(csv)
+      setCopied('csv')
+      setTimeout(() => setCopied(null), 1500)
+    } catch {
+      /* clipboard blocked — no-op */
+    }
+  }
+
   if (!rows.length) return <div style={{ color: '#888', fontSize: 13 }}>No rows returned.</div>
   const cols = Object.keys(rows[0])
   const th = { textAlign: 'left' as const, padding: '8px 12px', color: '#888', fontWeight: 500, fontSize: 11, textTransform: 'uppercase' as const, letterSpacing: '0.05em', borderBottom: '1px solid #2A2A2A' }
+  const copyBtn = { background: 'none', border: '1px solid #2A2A2A', color: '#F5F5F5', cursor: 'pointer', fontSize: 11, padding: '4px 10px', borderRadius: 4 } as const
   return (
     <div style={{ overflowX: 'auto' }}>
-      <div style={{ fontSize: 11, color: '#888', marginBottom: 8 }}>{rows.length} row(s)</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <span style={{ fontSize: 11, color: '#888' }}>{rows.length} row(s)</span>
+        <div style={{ flex: 1 }} />
+        {/* [BUG-317] Copy SQL results for pasting into Slack / tickets. */}
+        <button onClick={copyJson} style={copyBtn} data-testid='sql-copy-json'>
+          {copied === 'json' ? '✓ Copied' : 'Copy JSON'}
+        </button>
+        <button onClick={copyCsv} style={copyBtn} data-testid='sql-copy-csv'>
+          {copied === 'csv' ? '✓ Copied' : 'Copy CSV'}
+        </button>
+      </div>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
         <thead><tr>{cols.map(c => <th key={c} style={th}>{c}</th>)}</tr></thead>
         <tbody>{rows.slice(0, 500).map((r, i) => (

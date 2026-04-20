@@ -202,27 +202,27 @@ describe('[BUG-293] TopNav shows Content between Users and Builds', () => {
     expect(NAV).toMatch(/navItem\('\/announcements',\s*'Announcements'\)/)
   })
 
-  it('Content sits between Users and Builds in the nav order', () => {
-    const usersIdx = NAV.indexOf("navItem('/users'")
+  it('Content sits between Tenants and Builds in the nav order', () => {
+    // [BUG-317 #4] Tenants & Users subsumed the standalone Users nav
+    // entry. Content now sits between Tenants & Users and Builds.
+    const tenantsIdx = NAV.indexOf("navItem('/tenants'")
     const contentIdx = NAV.indexOf("navItem('/content'")
     const buildsIdx = NAV.indexOf("navItem('/builds'")
-    expect(usersIdx).toBeGreaterThan(-1)
-    expect(contentIdx).toBeGreaterThan(usersIdx)
+    expect(tenantsIdx).toBeGreaterThan(-1)
+    expect(contentIdx).toBeGreaterThan(tenantsIdx)
     expect(buildsIdx).toBeGreaterThan(contentIdx)
   })
 })
 
 // ── Coming-soon placeholders ────────────────────────────────────────────────
 
-describe('[BUG-293] Series + Announcements render a coming-soon placeholder', () => {
+describe('[BUG-293] Series renders a coming-soon placeholder', () => {
   it('Series page uses the shared ComingSoon component', () => {
     expect(SERIES).toMatch(/ComingSoon/)
     expect(SERIES).toMatch(/testId=['"]series-coming-soon['"]/)
   })
-  it('Announcements page uses the shared ComingSoon component', () => {
-    expect(ANN).toMatch(/ComingSoon/)
-    expect(ANN).toMatch(/testId=['"]announcements-coming-soon['"]/)
-  })
+  // [BUG-317 #7] Announcements moved from coming-soon to a wired
+  // round_communications table — see bug317AdminPortal.test.ts.
   it('shared ComingSoon surfaces a test-id + "Coming soon" label', () => {
     expect(COMING).toMatch(/data-testid=\{testId\}/)
     expect(COMING).toMatch(/Coming soon/)
