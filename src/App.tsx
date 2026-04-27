@@ -16,6 +16,11 @@ import SqlPage from './pages/SqlPage'
 import SeriesPage from './pages/SeriesPage'
 import AnnouncementsPage from './pages/AnnouncementsPage'
 import DebugConsolePage from './pages/DebugConsolePage'
+// [EPIC-211] Series Seeder — Speedhive discovery + staging + import.
+import SeriesSeederNewJobPage from './pages/series-seeder/SeriesSeederNewJobPage'
+import SeriesSeederStatusPage from './pages/series-seeder/SeriesSeederStatusPage'
+import SeriesSeederReviewPage from './pages/series-seeder/SeriesSeederReviewPage'
+import SeriesSeederCompletePage from './pages/series-seeder/SeriesSeederCompletePage'
 import TopNav from './components/TopNav'
 import BuildInfo from './components/BuildInfo'
 
@@ -112,6 +117,11 @@ export default function App() {
           <Route path='/usage' element={<ProtectedRoute><AdminLayout><UsagePage /></AdminLayout></ProtectedRoute>} />
           <Route path='/sql' element={<SuperAdminRoute><AdminLayout><SqlPage /></AdminLayout></SuperAdminRoute>} />
           <Route path='/debug' element={<SuperAdminRoute><AdminLayout><DebugConsolePage /></AdminLayout></SuperAdminRoute>} />
+          {/* [EPIC-211] Series Seeder — writes prod data, gated on SuperAdminRoute. */}
+          <Route path='/series-seeder' element={<SuperAdminRoute><AdminLayout><SeriesSeederNewJobPage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/series-seeder/:jobId' element={<SuperAdminRoute><AdminLayout><SeriesSeederStatusPage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/series-seeder/:jobId/review' element={<SuperAdminRoute><AdminLayout><SeriesSeederReviewPage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/series-seeder/:jobId/complete' element={<SuperAdminRoute><AdminLayout><SeriesSeederCompletePage /></AdminLayout></SuperAdminRoute>} />
           <Route path='*' element={<Navigate to='/' replace />} />
         </Routes>
       </BrowserRouter>

@@ -38,6 +38,8 @@ export default function TopNav() {
           {navItem('/usage', 'Usage')}
           {navItem('/sql', 'SQL')}
           {navItem('/debug', 'Debug')}
+          {/* [EPIC-211] Series Seeder — Speedhive discovery + staging + import. */}
+          {navItem('/series-seeder', 'Series Seeder')}
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
