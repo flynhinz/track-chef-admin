@@ -39,10 +39,23 @@ const NEW_TENANT_SENTINEL = '__new_tenant__'
 
 interface TenantRow { id: string; name: string }
 interface SeriesRow { id: string; name: string; season: string }
+// [EPIC-211 FUZZY] test_connection now returns a scored list of every
+// group seen in the window, sorted desc by fuzzyScore. Coordinator
+// ticks one or many; multi-select stages each group as its own TC
+// event under the same series (BMW = three classes, three events per
+// round).
+interface ScoredGroup {
+  name: string
+  score: number
+  event_count: number
+  last_event_name: string
+  last_date: string
+}
 interface TestResult {
   events_in_window: number
-  matched: number
-  sample_matches: { id: number; name: string; startDate: string; matchedGroup: string }[]
+  probed: number
+  input: string
+  scored_groups: ScoredGroup[]
   all_group_names_seen: string[]
 }
 
@@ -66,6 +79,10 @@ export default function SeriesSeederNewJobPage() {
 
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<TestResult | null>(null)
+  // [EPIC-211 FUZZY] Coordinator-confirmed selection from the scoring
+  // screen. Empty until the first test_connection completes; the top-
+  // scored group is auto-checked there.
+  const [selectedGroups, setSelectedGroups] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [okMsg, setOkMsg] = useState<string | null>(null)
@@ -103,13 +120,23 @@ export default function SeriesSeederNewJobPage() {
     setDateFrom(p.date_from)
     setDateTo(p.date_to)
     setTestResult(null)
+    setSelectedGroups([])
   }
 
   const canTest = !!groupName.trim() && !!dateFrom && !!dateTo
   const newTenantValid = !!newTenantName.trim() && !!newTenantEmail.trim() && newTenantPassword.length >= 6
+  // Discovery cannot start until the coordinator has confirmed at
+  // least one Speedhive group from the scoring screen — without that
+  // the EF discover loop has nothing to filter on.
   const canSubmit = useMemo(
-    () => !!seriesName.trim() && canTest && !!targetTenantId && (!isNewTenant || newTenantValid) && !!emailTo.trim(),
-    [seriesName, canTest, targetTenantId, isNewTenant, newTenantValid, emailTo],
+    () =>
+      !!seriesName.trim() &&
+      canTest &&
+      !!targetTenantId &&
+      (!isNewTenant || newTenantValid) &&
+      !!emailTo.trim() &&
+      selectedGroups.length > 0,
+    [seriesName, canTest, targetTenantId, isNewTenant, newTenantValid, emailTo, selectedGroups],
   )
 
   const testConnection = async () => {
@@ -143,11 +170,21 @@ export default function SeriesSeederNewJobPage() {
       })
       await (supabase as any).from('series_import_jobs').delete().eq('id', tempJob.id)
       if (error) throw error
-      setTestResult(data as TestResult)
-      if ((data as TestResult).matched === 0) {
-        setErrorMsg(`No matching events found · ${(data as TestResult).events_in_window} in window. Check group name.`)
+      const result = data as TestResult
+      setTestResult(result)
+      // Auto-select the top-scored group if it clears 60 (the
+      // word-overlap floor); coordinator can change before submitting.
+      const top = result.scored_groups?.[0]
+      if (top && top.score >= 60) {
+        setSelectedGroups([top.name])
       } else {
-        setOkMsg(`${(data as TestResult).matched} matching event(s) found`)
+        setSelectedGroups([])
+      }
+      const candCount = result.scored_groups?.length ?? 0
+      if (candCount === 0) {
+        setErrorMsg(`No groups found in ${result.events_in_window} event(s). Check date window or Speedhive availability.`)
+      } else {
+        setOkMsg(`Found ${candCount} candidate group(s) — review scores below`)
       }
     } catch (e) {
       console.error('[seeder] test_connection failed', e)
@@ -191,6 +228,12 @@ export default function SeriesSeederNewJobPage() {
           date_to: dateTo,
           email_to: emailTo,
           status: 'discovering',
+          // [EPIC-211 FUZZY] Coordinator-confirmed selection from the
+          // scoring screen. EF discover loop filters each event's
+          // groups against this list (case-insensitive exact). Stored
+          // alongside the legacy single speedhive_group_name (kept as
+          // a label / fallback).
+          staged_data: { selected_group_names: selectedGroups },
         })
         .select('id')
         .single()
@@ -254,23 +297,51 @@ export default function SeriesSeederNewJobPage() {
             </button>
           </div>
           {testResult && (
-            <div style={{ ...styles.card, padding: 10 }} data-testid="seeder-test-result">
-              <div style={{ fontSize: 12, color: tokens.text }}>
-                <span style={badge(testResult.matched > 0 ? 'ok' : 'warn')}>
-                  {testResult.matched} match{testResult.matched === 1 ? '' : 'es'}
-                </span>{' '}
-                of {testResult.events_in_window} event{testResult.events_in_window === 1 ? '' : 's'} in window
+            <div style={{ ...styles.card, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="seeder-test-result">
+              <div style={{ fontSize: 12, color: tokens.muted }}>
+                Probed {testResult.probed} of {testResult.events_in_window} event(s) ·
+                {' '}{testResult.scored_groups.length} unique group(s) found
               </div>
-              {testResult.sample_matches.length > 0 && (
-                <ul style={{ margin: '8px 0 0', paddingLeft: 16, fontSize: 11, color: tokens.muted }}>
-                  {testResult.sample_matches.map((m) => (
-                    <li key={m.id}>{m.startDate.slice(0, 10)} — {m.name} ({m.matchedGroup})</li>
-                  ))}
-                </ul>
-              )}
-              {testResult.matched === 0 && testResult.all_group_names_seen.length > 0 && (
-                <details style={{ marginTop: 8, fontSize: 11, color: tokens.muted }}>
-                  <summary style={{ cursor: 'pointer' }}>Group names seen ({testResult.all_group_names_seen.length})</summary>
+              <p style={{ fontSize: 12, color: tokens.text, margin: 0 }}>
+                Tick the group(s) that belong to <strong>{seriesName || 'this series'}</strong>.
+                Multiple groups (e.g. classes) → all imported under one series.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {testResult.scored_groups.map((g) => {
+                  const checked = selectedGroups.includes(g.name)
+                  const variant: 'ok' | 'warn' | 'muted' = g.score >= 80 ? 'ok' : g.score >= 60 ? 'warn' : 'muted'
+                  return (
+                    <label
+                      key={g.name}
+                      data-testid={`seeder-group-row-${g.name}`}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
+                        borderRadius: 6, border: `1px solid ${checked ? tokens.accent : tokens.border}`,
+                        background: checked ? 'rgba(220,38,38,0.08)' : 'transparent', cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        data-testid={`seeder-group-check-${g.name}`}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedGroups((prev) => Array.from(new Set([...prev, g.name])))
+                          else setSelectedGroups((prev) => prev.filter((n) => n !== g.name))
+                        }}
+                      />
+                      <span style={{ flex: 1, fontSize: 12, color: tokens.text }}>{g.name}</span>
+                      <span style={{ fontSize: 11, color: tokens.muted }}>{g.event_count} event(s)</span>
+                      <span style={badge(variant)}>{g.score}</span>
+                    </label>
+                  )
+                })}
+                {testResult.scored_groups.length === 0 && (
+                  <span style={{ fontSize: 11, color: tokens.muted }}>No groups scored — try adjusting the date window.</span>
+                )}
+              </div>
+              {testResult.all_group_names_seen.length > testResult.scored_groups.length && (
+                <details style={{ fontSize: 11, color: tokens.muted }}>
+                  <summary style={{ cursor: 'pointer' }}>All group names seen ({testResult.all_group_names_seen.length})</summary>
                   <ul style={{ margin: '6px 0 0', paddingLeft: 16 }}>
                     {testResult.all_group_names_seen.map((g) => <li key={g}>{g}</li>)}
                   </ul>
