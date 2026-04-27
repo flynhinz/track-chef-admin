@@ -20,11 +20,20 @@ interface SeedPreset {
   date_from: string
   date_to: string
   notes?: string
+  // [BUG-445] Confirmed Speedhive group names that the preset's
+  // discovery should auto-tick once Find Groups finishes. Names must
+  // match Speedhive exactly (case-insensitive); only ones present in
+  // the scored result are auto-selected.
+  selected_groups?: string[]
 }
 
 const PRESETS: SeedPreset[] = [
-  { series_name: 'BMW Race Drivers Series NZ',     speedhive_group_name: 'BMW Race Driver Series', date_from: '2025-10-01', date_to: '2026-04-30', notes: 'Multi-class' },
-  { series_name: 'Mazda Racing Series',            speedhive_group_name: 'Mazda Racing Series',    date_from: '2025-10-01', date_to: '2026-04-30', notes: 'RX8 rotary' },
+  { series_name: 'BMW Race Drivers Series NZ',     speedhive_group_name: 'BMW Race Driver Series', date_from: '2025-10-01', date_to: '2026-04-30', notes: 'Multi-class', selected_groups: [
+    'BMW Open GT Open A Open B',
+    'BMW Nexen Tyre E46',
+    'BMW 2 litre Open C E30 Challenge',
+  ] },
+  { series_name: 'Mazda Racing Series',            speedhive_group_name: 'Mazda Racing Series',    date_from: '2025-10-01', date_to: '2026-04-30', notes: 'RX8 rotary', selected_groups: ['Nexen Mazda Racing Series'] },
   { series_name: 'Motul Honda Cup',                speedhive_group_name: 'Honda Cup',              date_from: '2025-10-01', date_to: '2026-04-30' },
   { series_name: 'NZ Formula First',               speedhive_group_name: 'Formula First',          date_from: '2025-10-01', date_to: '2026-04-30' },
   { series_name: 'Castrol Toyota FR Oceania',      speedhive_group_name: 'Toyota Racing',          date_from: '2025-10-01', date_to: '2026-04-30', notes: 'CTFROT' },
@@ -68,7 +77,7 @@ export default function SeriesSeederNewJobPage() {
   const [dateTo, setDateTo] = useState('')
   const [targetTenantId, setTargetTenantId] = useState('')
   const [targetSeriesId, setTargetSeriesId] = useState('')
-  const [emailTo, setEmailTo] = useState('mark@i6mm.nz')
+  const [emailTo, setEmailTo] = useState('admin@track-chef.com')
 
   const [newTenantName, setNewTenantName] = useState('')
   const [newTenantEmail, setNewTenantEmail] = useState('')
@@ -83,6 +92,10 @@ export default function SeriesSeederNewJobPage() {
   // screen. Empty until the first test_connection completes; the top-
   // scored group is auto-checked there.
   const [selectedGroups, setSelectedGroups] = useState<string[]>([])
+  // [BUG-445] When a preset declares selected_groups, stash them on
+  // pending so the Find-Groups effect can auto-tick the ones that
+  // actually appear in the scored result (matched case-insensitive).
+  const [pendingPresetGroups, setPendingPresetGroups] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [okMsg, setOkMsg] = useState<string | null>(null)
@@ -112,6 +125,19 @@ export default function SeriesSeederNewJobPage() {
     })()
   }, [targetTenantId, isNewTenant])
 
+  // [BUG-445] Auto-fire Find Groups when a preset is applied. We only
+  // trigger when pendingPresetGroups is non-empty (set by applyPreset)
+  // so a typed-input change still requires the explicit button click —
+  // otherwise we'd hammer Speedhive on every keystroke.
+  useEffect(() => {
+    if (pendingPresetGroups.length === 0) return
+    if (!groupName.trim() || !dateFrom || !dateTo) return
+    if (testing) return
+    void testConnection()
+    // testConnection clears pendingPresetGroups when it completes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPresetGroups, groupName, dateFrom, dateTo])
+
   const applyPreset = (idx: string) => {
     const p = PRESETS[Number(idx)]
     if (!p) return
@@ -121,6 +147,7 @@ export default function SeriesSeederNewJobPage() {
     setDateTo(p.date_to)
     setTestResult(null)
     setSelectedGroups([])
+    setPendingPresetGroups(p.selected_groups ?? [])
   }
 
   const canTest = !!groupName.trim() && !!dateFrom && !!dateTo
@@ -172,17 +199,27 @@ export default function SeriesSeederNewJobPage() {
       if (error) throw error
       const result = data as TestResult
       setTestResult(result)
-      // Auto-select the top-scored group if it clears 60 (the
-      // word-overlap floor); coordinator can change before submitting.
-      const top = result.scored_groups?.[0]
-      if (top && top.score >= 60) {
-        setSelectedGroups([top.name])
+      // [BUG-445] Preset auto-tick: if the active preset declared
+      // selected_groups, intersect with what Speedhive actually
+      // returned (case-insensitive exact). Otherwise fall back to
+      // the legacy "auto-tick the top group if score ≥60" behaviour.
+      const presetMatches = pendingPresetGroups.length > 0
+        ? result.scored_groups
+            .filter((g) => pendingPresetGroups.some((p) => p.toLowerCase() === g.name.toLowerCase()))
+            .map((g) => g.name)
+        : []
+      if (presetMatches.length > 0) {
+        setSelectedGroups(presetMatches)
       } else {
-        setSelectedGroups([])
+        const top = result.scored_groups?.[0]
+        setSelectedGroups(top && top.score >= 60 ? [top.name] : [])
       }
+      setPendingPresetGroups([])
       const candCount = result.scored_groups?.length ?? 0
       if (candCount === 0) {
         setErrorMsg(`No groups found in ${result.events_in_window} event(s). Check date window or Speedhive availability.`)
+      } else if (presetMatches.length > 0) {
+        setOkMsg(`Auto-selected ${presetMatches.length} preset group(s); ${candCount} candidate(s) shown`)
       } else {
         setOkMsg(`Found ${candCount} candidate group(s) — review scores below`)
       }
@@ -293,14 +330,29 @@ export default function SeriesSeederNewJobPage() {
               disabled={!canTest || testing}
               style={{ ...styles.btnGhost, ...((!canTest || testing) ? styles.btnDisabled : {}) }}
             >
-              {testing ? 'Testing…' : 'Test connection'}
+              {testing ? 'Scanning…' : 'Find groups'}
             </button>
           </div>
+          {/* [BUG-445] Inline wait indicator — muted-text standard used
+              across the admin portal (BuildsPage / DashboardPage / etc).
+              Probing the entire window can take 30–60s on a wide range. */}
+          {testing && (
+            <div
+              role="status"
+              aria-live="polite"
+              data-testid="seeder-scanning"
+              style={{ fontSize: 12, color: tokens.muted, padding: '6px 0' }}
+            >
+              Scanning Speedhive… probing every event in the date window.
+            </div>
+          )}
           {testResult && (
             <div style={{ ...styles.card, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="seeder-test-result">
               <div style={{ fontSize: 12, color: tokens.muted }}>
                 Probed {testResult.probed} of {testResult.events_in_window} event(s) ·
-                {' '}{testResult.scored_groups.length} unique group(s) found
+                {' '}{testResult.scored_groups.length} group(s) above score 30
+                {testResult.all_group_names_seen.length > testResult.scored_groups.length &&
+                  ` · ${testResult.all_group_names_seen.length - testResult.scored_groups.length} hidden as noise`}
               </div>
               <p style={{ fontSize: 12, color: tokens.text, margin: 0 }}>
                 Tick the group(s) that belong to <strong>{seriesName || 'this series'}</strong>.
