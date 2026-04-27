@@ -333,17 +333,20 @@ export default function SeriesSeederNewJobPage() {
               {testing ? 'Scanning…' : 'Find groups'}
             </button>
           </div>
-          {/* [BUG-445] Inline wait indicator — muted-text standard used
-              across the admin portal (BuildsPage / DashboardPage / etc).
-              Probing the entire window can take 30–60s on a wide range. */}
+          {/* [BUG-445] Wait indicator — same pattern as the Status page
+              shows for status='discovering': accent badge + muted line
+              under it. Probing the whole window can take 30–60s. */}
           {testing && (
             <div
               role="status"
               aria-live="polite"
               data-testid="seeder-scanning"
-              style={{ fontSize: 12, color: tokens.muted, padding: '6px 0' }}
+              style={{ ...styles.row, padding: '6px 0' }}
             >
-              Scanning Speedhive… probing every event in the date window.
+              <span style={badge('accent')}>scanning</span>
+              <span style={{ fontSize: 11, color: tokens.muted }}>
+                Probing every event in the date window — this can take 30–60s on a wide range.
+              </span>
             </div>
           )}
           {testResult && (
