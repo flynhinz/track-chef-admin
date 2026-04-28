@@ -107,6 +107,11 @@ export default function SeriesSeederNewJobPage() {
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [okMsg, setOkMsg] = useState<string | null>(null)
+  // [BUG-451] When ON (default), Find Groups + Discover restrict to
+  // events whose location.name matches a circuits.speedhive_name_aliases
+  // entry — drops speedways / oval / unknown venues. Persisted in the
+  // job's staged_data so the EF honours it for both stages.
+  const [onlyKnownCircuits, setOnlyKnownCircuits] = useState(true)
 
   const isNewTenant = targetTenantId === NEW_TENANT_SENTINEL
 
@@ -186,6 +191,9 @@ export default function SeriesSeederNewJobPage() {
           date_to: dateTo,
           email_to: emailTo,
           status: 'discovering',
+          // [BUG-451] EF reads only_known_circuits from staged_data
+          // for both test_connection and discover.
+          staged_data: { only_known_circuits: onlyKnownCircuits },
         })
         .select('id')
         .single()
@@ -274,7 +282,12 @@ export default function SeriesSeederNewJobPage() {
           // groups against this list (case-insensitive exact). Stored
           // alongside the legacy single speedhive_group_name (kept as
           // a label / fallback).
-          staged_data: { selected_group_names: selectedGroups },
+          // [BUG-451] only_known_circuits gates the Speedhive events
+          // list to circuits.speedhive_name_aliases matches.
+          staged_data: {
+            selected_group_names: selectedGroups,
+            only_known_circuits: onlyKnownCircuits,
+          },
         })
         .select('id')
         .single()
@@ -345,6 +358,26 @@ export default function SeriesSeederNewJobPage() {
             <input id="seeder-to" data-testid="seeder-to" type="date" style={styles.input} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
         </div>
+
+        {/* [BUG-451] Default-on filter to events at known circuits.
+            Strips Speedhive's speedway / oval / unknown-venue noise
+            so a wide window doesn't churn through irrelevant events.
+            Untick to scan everything. */}
+        <label
+          style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: tokens.text, cursor: 'pointer' }}
+          data-testid="seeder-only-known-circuits-label"
+        >
+          <input
+            type="checkbox"
+            checked={onlyKnownCircuits}
+            onChange={(e) => setOnlyKnownCircuits(e.target.checked)}
+            data-testid="seeder-only-known-circuits"
+          />
+          Only events at our circuits
+          <span style={{ fontSize: 11, color: tokens.muted }}>
+            (drops speedways / unknown venues)
+          </span>
+        </label>
 
         <button
           type="button"
