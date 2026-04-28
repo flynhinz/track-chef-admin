@@ -40,6 +40,14 @@ interface JobRow {
     candidates_processed?: number
     selected_group_names?: string[]
     trace?: TraceRow[]
+    // [BUG-453] Import-phase progress, written by seedImport after
+    // each event so the Status page can show a live progress bar
+    // during status='importing'.
+    import_total?: number
+    import_processed?: number
+    import_results_so_far?: number
+    import_drivers_so_far?: number
+    import_current_event_name?: string
   } | null
 }
 
@@ -110,9 +118,17 @@ export default function SeriesSeederStatusPage() {
     return <div style={{ ...styles.page, color: tokens.muted, padding: 40 }}>Loading…</div>
   }
 
-  const total = job.staged_data?.candidates_total ?? 0
-  const processed = job.staged_data?.candidates_processed ?? 0
+  // [BUG-453] During status='importing' we show import progress
+  // (events imported / total) instead of the discover progress.
+  const isImporting = job.status === 'importing'
+  const total = isImporting
+    ? (job.staged_data?.import_total ?? 0)
+    : (job.staged_data?.candidates_total ?? 0)
+  const processed = isImporting
+    ? (job.staged_data?.import_processed ?? 0)
+    : (job.staged_data?.candidates_processed ?? 0)
   const pct = total > 0 ? Math.round((processed / total) * 100) : 0
+  const currentEventName = isImporting ? job.staged_data?.import_current_event_name : null
 
   return (
     <div style={styles.page} data-testid="series-seeder-status">
@@ -132,6 +148,7 @@ export default function SeriesSeederStatusPage() {
           {total > 0 && (
             <span style={{ fontSize: 11, color: tokens.muted }}>
               {processed} of {total} events ({pct}%)
+              {isImporting && currentEventName && ` · ${currentEventName}`}
             </span>
           )}
         </div>
@@ -161,6 +178,12 @@ export default function SeriesSeederStatusPage() {
 
         {job.status === 'discovering' && (
           <p style={{ ...styles.sub, marginTop: 0 }}>Auto-refreshing every {POLL_MS / 1000}s — leave this page open or come back later.</p>
+        )}
+        {isImporting && (
+          <p style={{ ...styles.sub, marginTop: 0 }}>
+            Importing into the target series — creating events, sessions, results, and recalculating standings.
+            {' '}Auto-refreshing every {POLL_MS / 1000}s; the page jumps to a summary when done.
+          </p>
         )}
       </div>
 
