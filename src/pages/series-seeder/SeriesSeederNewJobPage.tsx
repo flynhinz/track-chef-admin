@@ -20,20 +20,32 @@ interface SeedPreset {
   date_from: string
   date_to: string
   notes?: string
-  // [BUG-445] Confirmed Speedhive group names that the preset's
-  // discovery should auto-tick once Find Groups finishes. Names must
-  // match Speedhive exactly (case-insensitive); only ones present in
-  // the scored result are auto-selected.
-  selected_groups?: string[]
+}
+
+// [BUG-447 v2] Auto-tick logic uses BRAND-TOKEN matching, not
+// hardcoded variant lists — the user-typed input (e.g. "BMW Race
+// Driver Series") is split into words; the uncommon ones are the
+// brand signal ("BMW") and any scored group whose name contains one
+// of those tokens gets auto-ticked. So "BMW Race Driver Series -
+// Endurance", "BMW RDS - Open GT/A/B", and any future BMW variant
+// all auto-tick from a single preset, with no per-name maintenance.
+// Common-word stoplist below.
+const STOPWORDS = new Set([
+  'series', 'racing', 'race', 'cup', 'driver', 'drivers',
+  'championship', 'class', 'classes', 'nz', 'and', 'the', 'of',
+  'oceania', 'fr', 'open',
+])
+
+function brandTokens(input: string): string[] {
+  return input
+    .split(/\s+/)
+    .map((t) => t.trim().toLowerCase().replace(/[^a-z0-9]/g, ''))
+    .filter((t) => t.length >= 2 && !STOPWORDS.has(t))
 }
 
 const PRESETS: SeedPreset[] = [
-  { series_name: 'BMW Race Drivers Series NZ',     speedhive_group_name: 'BMW Race Driver Series', date_from: '2025-10-01', date_to: '2026-04-30', notes: 'Multi-class', selected_groups: [
-    'BMW Open GT Open A Open B',
-    'BMW Nexen Tyre E46',
-    'BMW 2 litre Open C E30 Challenge',
-  ] },
-  { series_name: 'Mazda Racing Series',            speedhive_group_name: 'Mazda Racing Series',    date_from: '2025-10-01', date_to: '2026-04-30', notes: 'RX8 rotary', selected_groups: ['Nexen Mazda Racing Series'] },
+  { series_name: 'BMW Race Drivers Series NZ',     speedhive_group_name: 'BMW Race Driver Series', date_from: '2025-10-01', date_to: '2026-04-30', notes: 'Multi-class' },
+  { series_name: 'Mazda Racing Series',            speedhive_group_name: 'Mazda Racing Series',    date_from: '2025-10-01', date_to: '2026-04-30', notes: 'RX8 rotary' },
   { series_name: 'Motul Honda Cup',                speedhive_group_name: 'Honda Cup',              date_from: '2025-10-01', date_to: '2026-04-30' },
   { series_name: 'NZ Formula First',               speedhive_group_name: 'Formula First',          date_from: '2025-10-01', date_to: '2026-04-30' },
   { series_name: 'Castrol Toyota FR Oceania',      speedhive_group_name: 'Toyota Racing',          date_from: '2025-10-01', date_to: '2026-04-30', notes: 'CTFROT' },
@@ -92,10 +104,10 @@ export default function SeriesSeederNewJobPage() {
   // screen. Empty until the first test_connection completes; the top-
   // scored group is auto-checked there.
   const [selectedGroups, setSelectedGroups] = useState<string[]>([])
-  // [BUG-445] When a preset declares selected_groups, stash them on
-  // pending so the Find-Groups effect can auto-tick the ones that
-  // actually appear in the scored result (matched case-insensitive).
-  const [pendingPresetGroups, setPendingPresetGroups] = useState<string[]>([])
+  // [BUG-447 v2] Whether the auto-fire useEffect should kick a Find
+  // Groups when input + dates settle. Only set true by applyPreset so
+  // typed-input changes don't trigger requests on every keystroke.
+  const [presetJustApplied, setPresetJustApplied] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [okMsg, setOkMsg] = useState<string | null>(null)
@@ -125,18 +137,18 @@ export default function SeriesSeederNewJobPage() {
     })()
   }, [targetTenantId, isNewTenant])
 
-  // [BUG-445] Auto-fire Find Groups when a preset is applied. We only
-  // trigger when pendingPresetGroups is non-empty (set by applyPreset)
-  // so a typed-input change still requires the explicit button click —
-  // otherwise we'd hammer Speedhive on every keystroke.
+  // [BUG-447 v2] Auto-fire Find Groups after a preset is applied,
+  // once input + dates settle. Typed-input changes still require an
+  // explicit button click — gated on presetJustApplied so we don't
+  // hammer Speedhive on keystrokes.
   useEffect(() => {
-    if (pendingPresetGroups.length === 0) return
+    if (!presetJustApplied) return
     if (!groupName.trim() || !dateFrom || !dateTo) return
     if (testing) return
     void testConnection()
-    // testConnection clears pendingPresetGroups when it completes.
+    // testConnection clears presetJustApplied when it completes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingPresetGroups, groupName, dateFrom, dateTo])
+  }, [presetJustApplied, groupName, dateFrom, dateTo])
 
   const applyPreset = (idx: string) => {
     const p = PRESETS[Number(idx)]
@@ -147,7 +159,7 @@ export default function SeriesSeederNewJobPage() {
     setDateTo(p.date_to)
     setTestResult(null)
     setSelectedGroups([])
-    setPendingPresetGroups(p.selected_groups ?? [])
+    setPresetJustApplied(true)
   }
 
   const canTest = !!groupName.trim() && !!dateFrom && !!dateTo
@@ -199,27 +211,34 @@ export default function SeriesSeederNewJobPage() {
       if (error) throw error
       const result = data as TestResult
       setTestResult(result)
-      // [BUG-445] Preset auto-tick: if the active preset declared
-      // selected_groups, intersect with what Speedhive actually
-      // returned (case-insensitive exact). Otherwise fall back to
-      // the legacy "auto-tick the top group if score ≥60" behaviour.
-      const presetMatches = pendingPresetGroups.length > 0
+      // [BUG-447 v2] Brand-token auto-tick. Extract the uncommon words
+      // from the user's input (BMW, Mazda, Porsche…) and tick every
+      // scored group whose name contains any of them — substring,
+      // case-insensitive. Catches every Speedhive naming variant for a
+      // brand without per-name maintenance. Falls back to top-scored
+      // single group if no brand tokens are extractable from the input.
+      const brands = brandTokens(groupName)
+      const brandMatches = brands.length > 0
         ? result.scored_groups
-            .filter((g) => pendingPresetGroups.some((p) => p.toLowerCase() === g.name.toLowerCase()))
+            .filter((g) =>
+              brands.some((b) =>
+                g.name.toLowerCase().replace(/[^a-z0-9]/g, '').includes(b),
+              ),
+            )
             .map((g) => g.name)
         : []
-      if (presetMatches.length > 0) {
-        setSelectedGroups(presetMatches)
+      if (brandMatches.length > 0) {
+        setSelectedGroups(brandMatches)
       } else {
         const top = result.scored_groups?.[0]
         setSelectedGroups(top && top.score >= 60 ? [top.name] : [])
       }
-      setPendingPresetGroups([])
+      setPresetJustApplied(false)
       const candCount = result.scored_groups?.length ?? 0
       if (candCount === 0) {
         setErrorMsg(`No groups found in ${result.events_in_window} event(s). Check date window or Speedhive availability.`)
-      } else if (presetMatches.length > 0) {
-        setOkMsg(`Auto-selected ${presetMatches.length} preset group(s); ${candCount} candidate(s) shown`)
+      } else if (brandMatches.length > 0) {
+        setOkMsg(`Auto-selected ${brandMatches.length} group(s) matching "${brands.join(', ')}" — review and adjust below`)
       } else {
         setOkMsg(`Found ${candCount} candidate group(s) — review scores below`)
       }
