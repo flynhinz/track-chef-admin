@@ -8,6 +8,21 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { styles, tokens, badge } from './seederStyles'
 
+// [BUG-447] One trace row per probed candidate. Mirrors the EF
+// TraceRow shape; see supabase/functions/sync-speedhive/index.ts.
+interface TraceRow {
+  event_id: number
+  event_name: string
+  start_date: string
+  year_month: string
+  location: string | null
+  sh_groups_seen: string[]
+  status: 'match' | 'partial' | 'skipped' | 'error'
+  matched_groups: string[]
+  reason: string
+  manual?: boolean
+}
+
 interface JobRow {
   id: string
   status: string
@@ -20,7 +35,12 @@ interface JobRow {
   results_found: number | null
   drivers_found: number | null
   error_message: string | null
-  staged_data: { candidates_total?: number; candidates_processed?: number } | null
+  staged_data: {
+    candidates_total?: number
+    candidates_processed?: number
+    selected_group_names?: string[]
+    trace?: TraceRow[]
+  } | null
 }
 
 const POLL_MS = 10_000
@@ -143,6 +163,244 @@ export default function SeriesSeederStatusPage() {
           <p style={{ ...styles.sub, marginTop: 0 }}>Auto-refreshing every {POLL_MS / 1000}s — leave this page open or come back later.</p>
         )}
       </div>
+
+      {/* [BUG-447] Verbose trace, grouped by month. One row per probed
+          event with status badge + the SH groups Speedhive returned.
+          For skipped/partial rows the user can pick missing groups
+          inline and POST manual_match. */}
+      <DiscoveryTrace
+        jobId={job.id}
+        trace={job.staged_data?.trace ?? []}
+        selectedGroupNames={job.staged_data?.selected_group_names ?? []}
+      />
+    </div>
+  )
+}
+
+// [BUG-447] Verbose trace renderer. Groups by year_month, latest
+// month first. Each row shows event date · name · location · status
+// badge · matched-or-seen groups. Skipped/partial rows expose a
+// "Match manually" button that opens an inline checkbox list of the
+// SH groups that event actually had — ticking + Stage POSTs
+// manual_match to the EF.
+function DiscoveryTrace({
+  jobId,
+  trace,
+  selectedGroupNames,
+}: {
+  jobId: string
+  trace: TraceRow[]
+  selectedGroupNames: string[]
+}) {
+  // Local UI state — which months are expanded (default: latest only),
+  // which event_id has its manual-match panel open, and which group
+  // names are ticked inside that panel.
+  const [openMonths, setOpenMonths] = useState<Record<string, boolean>>({})
+  const [openManualEvent, setOpenManualEvent] = useState<number | null>(null)
+  const [manualPicks, setManualPicks] = useState<string[]>([])
+  const [busyEventId, setBusyEventId] = useState<number | null>(null)
+  const [manualError, setManualError] = useState<string | null>(null)
+
+  if (trace.length === 0) return null
+
+  // Group by year_month, then sort each group by start_date desc.
+  const byMonth = new Map<string, TraceRow[]>()
+  for (const t of trace) {
+    const k = t.year_month || 'unknown'
+    if (!byMonth.has(k)) byMonth.set(k, [])
+    byMonth.get(k)!.push(t)
+  }
+  for (const rows of byMonth.values()) {
+    rows.sort((a, b) => String(b.start_date).localeCompare(String(a.start_date)))
+  }
+  const months = Array.from(byMonth.keys()).sort((a, b) => b.localeCompare(a))
+
+  const counts = trace.reduce(
+    (acc, t) => {
+      acc[t.status] = (acc[t.status] ?? 0) + 1
+      return acc
+    },
+    {} as Record<string, number>,
+  )
+
+  const toggleMonth = (k: string) =>
+    setOpenMonths((prev) => ({ ...prev, [k]: !(prev[k] ?? k === months[0]) }))
+
+  const openManual = (row: TraceRow) => {
+    setOpenManualEvent(row.event_id)
+    // Pre-tick anything from the selected list that DID appear in this
+    // event's SH groups but somehow didn't match (defensive — should
+    // be empty for skipped, useful for partial).
+    const seenLower = row.sh_groups_seen.map((s) => s.toLowerCase())
+    const preTick = selectedGroupNames.filter((n) => seenLower.includes(n.toLowerCase()))
+    setManualPicks(preTick)
+    setManualError(null)
+  }
+
+  const submitManual = async (row: TraceRow) => {
+    if (manualPicks.length === 0) {
+      setManualError('Pick at least one group')
+      return
+    }
+    setBusyEventId(row.event_id)
+    setManualError(null)
+    try {
+      const { error } = await (supabase as any).functions.invoke('sync-speedhive', {
+        body: {
+          mode: 'seed_series',
+          action: 'manual_match',
+          job_id: jobId,
+          event_id: row.event_id,
+          group_names: manualPicks,
+        },
+      })
+      if (error) throw error
+      setOpenManualEvent(null)
+      setManualPicks([])
+    } catch (e) {
+      setManualError((e as Error).message ?? 'Manual match failed')
+    } finally {
+      setBusyEventId(null)
+    }
+  }
+
+  return (
+    <div style={{ ...styles.card, ...styles.section }} data-testid="seeder-trace">
+      <div style={styles.row}>
+        <strong style={{ fontSize: 13 }}>Discovery log</strong>
+        <span style={{ fontSize: 11, color: tokens.muted }}>
+          {counts.match ?? 0} match · {counts.partial ?? 0} partial · {counts.skipped ?? 0} skipped
+          {counts.error ? ` · ${counts.error} error` : ''}
+        </span>
+      </div>
+
+      {months.map((ym) => {
+        const rows = byMonth.get(ym)!
+        const isOpen = openMonths[ym] ?? ym === months[0]
+        const monthMatch = rows.filter((r) => r.status === 'match' || r.status === 'partial').length
+        return (
+          <div key={ym} data-testid={`seeder-trace-month-${ym}`}>
+            <button
+              type="button"
+              onClick={() => toggleMonth(ym)}
+              style={{
+                width: '100%', textAlign: 'left', padding: '8px 10px',
+                background: 'transparent', border: `1px solid ${tokens.border}`,
+                borderRadius: 6, color: tokens.text, cursor: 'pointer',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}
+            >
+              <span style={{ fontSize: 12 }}>{isOpen ? '▾' : '▸'} {ym}</span>
+              <span style={{ fontSize: 11, color: tokens.muted }}>
+                {rows.length} probed · {monthMatch} matched
+              </span>
+            </button>
+            {isOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                {rows.map((row) => {
+                  const variant: 'ok' | 'warn' | 'muted' =
+                    row.status === 'match' ? 'ok' :
+                    row.status === 'partial' ? 'warn' :
+                    'muted'
+                  return (
+                    <div
+                      key={`${row.event_id}-${row.start_date}`}
+                      data-testid={`seeder-trace-row-${row.event_id}`}
+                      style={{
+                        padding: '6px 10px', borderRadius: 6,
+                        border: `1px solid ${tokens.border}`,
+                        display: 'flex', flexDirection: 'column', gap: 4,
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 11, color: tokens.muted, minWidth: 80 }}>{row.start_date}</span>
+                        <span style={{ fontSize: 12, color: tokens.text, flex: 1, minWidth: 200 }}>
+                          {row.event_name}
+                          {row.location && <span style={{ color: tokens.muted }}> · {row.location}</span>}
+                        </span>
+                        <span style={badge(variant)}>{row.status}{row.manual ? ' · manual' : ''}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: tokens.muted, paddingLeft: 88 }}>
+                        {row.matched_groups.length > 0
+                          ? `Matched: ${row.matched_groups.join(', ')}`
+                          : row.sh_groups_seen.length > 0
+                            ? `Saw: ${row.sh_groups_seen.join(' · ')}`
+                            : row.reason}
+                      </div>
+                      {(row.status === 'skipped' || row.status === 'partial' || row.status === 'error') && (
+                        <div style={{ paddingLeft: 88 }}>
+                          {openManualEvent === row.event_id ? (
+                            <div style={{
+                              padding: 8, marginTop: 4, borderRadius: 4,
+                              background: 'rgba(220,38,38,0.05)',
+                              border: `1px solid ${tokens.border}`,
+                              display: 'flex', flexDirection: 'column', gap: 6,
+                            }}>
+                              <span style={{ fontSize: 11, color: tokens.muted }}>
+                                Tick the group(s) to attach for this event:
+                              </span>
+                              {row.sh_groups_seen.length === 0 ? (
+                                <span style={{ fontSize: 11, color: tokens.muted }}>
+                                  Speedhive returned no groups for this event — nothing to attach.
+                                </span>
+                              ) : (
+                                row.sh_groups_seen.map((g) => {
+                                  const checked = manualPicks.includes(g)
+                                  return (
+                                    <label key={g} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(e) => {
+                                          if (e.target.checked) setManualPicks((prev) => Array.from(new Set([...prev, g])))
+                                          else setManualPicks((prev) => prev.filter((n) => n !== g))
+                                        }}
+                                      />
+                                      <span style={{ color: tokens.text }}>{g}</span>
+                                    </label>
+                                  )
+                                })
+                              )}
+                              {manualError && <span style={{ fontSize: 11, color: tokens.warn ?? '#DC2626' }}>{manualError}</span>}
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => submitManual(row)}
+                                  disabled={busyEventId === row.event_id || row.sh_groups_seen.length === 0}
+                                  data-testid={`seeder-manual-stage-${row.event_id}`}
+                                  style={{ ...styles.btn, ...((busyEventId === row.event_id || row.sh_groups_seen.length === 0) ? styles.btnDisabled : {}), padding: '4px 10px', fontSize: 12 }}
+                                >
+                                  {busyEventId === row.event_id ? 'Staging…' : 'Stage'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setOpenManualEvent(null); setManualPicks([]); setManualError(null) }}
+                                  style={{ ...styles.btnGhost, padding: '4px 10px', fontSize: 12 }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => openManual(row)}
+                              data-testid={`seeder-manual-open-${row.event_id}`}
+                              style={{ ...styles.btnGhost, padding: '2px 8px', fontSize: 11, marginTop: 2 }}
+                            >
+                              Match manually
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
