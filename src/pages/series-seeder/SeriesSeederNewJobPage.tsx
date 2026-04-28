@@ -416,15 +416,25 @@ export default function SeriesSeederNewJobPage() {
           </div>
           <div style={{ fontSize: 12, color: tokens.muted }}>
             Probed {testResult.probed} of {testResult.events_in_window} event(s) ·
-            {' '}{testResult.scored_groups.length} group(s) above score 30
-            {testResult.all_group_names_seen.length > testResult.scored_groups.length &&
-              ` · ${testResult.all_group_names_seen.length - testResult.scored_groups.length} hidden as noise`}
+            {' '}{testResult.scored_groups.length} unique group name(s) ·
+            {' '}{selectedGroups.length} ticked
           </div>
           <p style={{ fontSize: 12, color: tokens.text, margin: 0 }}>
             Tick the group(s) that belong to <strong>{seriesName || 'this series'}</strong>.
             Multiple groups (e.g. classes) → all imported under one series.
+            Brand-matched names (containing "{brandTokens(groupName).join('", "') || '—'}") were auto-ticked.
           </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {/* [BUG-452] Single scrollable picker — no score threshold,
+              every group is tickable. Anything below the brand-match
+              gets a muted score badge so the user can tell what's
+              likely-relevant from likely-noise without hiding it. */}
+          <div
+            style={{
+              display: 'flex', flexDirection: 'column', gap: 4,
+              maxHeight: 480, overflowY: 'auto',
+              padding: 4, border: `1px solid ${tokens.border}`, borderRadius: 6,
+            }}
+          >
             {testResult.scored_groups.map((g) => {
               const checked = selectedGroups.includes(g.name)
               const variant: 'ok' | 'warn' | 'muted' = g.score >= 80 ? 'ok' : g.score >= 60 ? 'warn' : 'muted'
@@ -454,17 +464,9 @@ export default function SeriesSeederNewJobPage() {
               )
             })}
             {testResult.scored_groups.length === 0 && (
-              <span style={{ fontSize: 11, color: tokens.muted }}>No groups scored — try adjusting the date window.</span>
+              <span style={{ fontSize: 11, color: tokens.muted, padding: 8 }}>No groups found — try adjusting the date window or unticking "Only events at our circuits".</span>
             )}
           </div>
-          {testResult.all_group_names_seen.length > testResult.scored_groups.length && (
-            <details style={{ fontSize: 11, color: tokens.muted }}>
-              <summary style={{ cursor: 'pointer' }}>All group names seen ({testResult.all_group_names_seen.length})</summary>
-              <ul style={{ margin: '6px 0 0', paddingLeft: 16 }}>
-                {testResult.all_group_names_seen.map((g) => <li key={g}>{g}</li>)}
-              </ul>
-            </details>
-          )}
         </div>
       )}
 
