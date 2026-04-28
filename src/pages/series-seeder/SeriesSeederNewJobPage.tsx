@@ -104,10 +104,6 @@ export default function SeriesSeederNewJobPage() {
   // screen. Empty until the first test_connection completes; the top-
   // scored group is auto-checked there.
   const [selectedGroups, setSelectedGroups] = useState<string[]>([])
-  // [BUG-447 v2] Whether the auto-fire useEffect should kick a Find
-  // Groups when input + dates settle. Only set true by applyPreset so
-  // typed-input changes don't trigger requests on every keystroke.
-  const [presetJustApplied, setPresetJustApplied] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [okMsg, setOkMsg] = useState<string | null>(null)
@@ -137,19 +133,10 @@ export default function SeriesSeederNewJobPage() {
     })()
   }, [targetTenantId, isNewTenant])
 
-  // [BUG-447 v2] Auto-fire Find Groups after a preset is applied,
-  // once input + dates settle. Typed-input changes still require an
-  // explicit button click — gated on presetJustApplied so we don't
-  // hammer Speedhive on keystrokes.
-  useEffect(() => {
-    if (!presetJustApplied) return
-    if (!groupName.trim() || !dateFrom || !dateTo) return
-    if (testing) return
-    void testConnection()
-    // testConnection clears presetJustApplied when it completes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presetJustApplied, groupName, dateFrom, dateTo])
-
+  // [BUG-450] Picking a preset only fills the fields — nothing is
+  // probed until the coordinator clicks Find Groups. Lets them
+  // adjust dates or the group input first without each change
+  // firing a request.
   const applyPreset = (idx: string) => {
     const p = PRESETS[Number(idx)]
     if (!p) return
@@ -159,7 +146,6 @@ export default function SeriesSeederNewJobPage() {
     setDateTo(p.date_to)
     setTestResult(null)
     setSelectedGroups([])
-    setPresetJustApplied(true)
   }
 
   const canTest = !!groupName.trim() && !!dateFrom && !!dateTo
@@ -233,7 +219,6 @@ export default function SeriesSeederNewJobPage() {
         const top = result.scored_groups?.[0]
         setSelectedGroups(top && top.score >= 60 ? [top.name] : [])
       }
-      setPresetJustApplied(false)
       const candCount = result.scored_groups?.length ?? 0
       if (candCount === 0) {
         setErrorMsg(`No groups found in ${result.events_in_window} event(s). Check date window or Speedhive availability.`)
@@ -315,7 +300,14 @@ export default function SeriesSeederNewJobPage() {
       {errorMsg && <div style={styles.errorBanner}>{errorMsg}</div>}
       {okMsg && <div style={styles.okBanner}>{okMsg}</div>}
 
-      <div style={{ ...styles.card, ...styles.section }}>
+      {/* [BUG-450] Step 1 — Series + dates. Nothing is probed until the
+          user clicks Find Groups. Picking a preset only fills the
+          fields. */}
+      <div style={{ ...styles.card, ...styles.section }} data-testid="seeder-step-series">
+        <div style={{ fontSize: 11, color: tokens.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          Step 1 · Series &amp; dates
+        </div>
+
         <div style={styles.section}>
           <label style={styles.label}>Quick preset</label>
           <select
@@ -340,89 +332,7 @@ export default function SeriesSeederNewJobPage() {
 
         <div style={styles.section}>
           <label style={styles.label} htmlFor="seeder-group">Speedhive group name</label>
-          <div style={styles.row}>
-            <input id="seeder-group" data-testid="seeder-group" style={{ ...styles.input, flex: 1, minWidth: 240 }} value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="e.g. BMW Race Driver Series" />
-            <button
-              type="button"
-              data-testid="seeder-test"
-              onClick={testConnection}
-              disabled={!canTest || testing}
-              style={{ ...styles.btnGhost, ...((!canTest || testing) ? styles.btnDisabled : {}) }}
-            >
-              {testing ? 'Scanning…' : 'Find groups'}
-            </button>
-          </div>
-          {/* [BUG-445] Wait indicator — same pattern as the Status page
-              shows for status='discovering': accent badge + muted line
-              under it. Probing the whole window can take 30–60s. */}
-          {testing && (
-            <div
-              role="status"
-              aria-live="polite"
-              data-testid="seeder-scanning"
-              style={{ ...styles.row, padding: '6px 0' }}
-            >
-              <span style={badge('accent')}>scanning</span>
-              <span style={{ fontSize: 11, color: tokens.muted }}>
-                Probing every event in the date window — this can take 30–60s on a wide range.
-              </span>
-            </div>
-          )}
-          {testResult && (
-            <div style={{ ...styles.card, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }} data-testid="seeder-test-result">
-              <div style={{ fontSize: 12, color: tokens.muted }}>
-                Probed {testResult.probed} of {testResult.events_in_window} event(s) ·
-                {' '}{testResult.scored_groups.length} group(s) above score 30
-                {testResult.all_group_names_seen.length > testResult.scored_groups.length &&
-                  ` · ${testResult.all_group_names_seen.length - testResult.scored_groups.length} hidden as noise`}
-              </div>
-              <p style={{ fontSize: 12, color: tokens.text, margin: 0 }}>
-                Tick the group(s) that belong to <strong>{seriesName || 'this series'}</strong>.
-                Multiple groups (e.g. classes) → all imported under one series.
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {testResult.scored_groups.map((g) => {
-                  const checked = selectedGroups.includes(g.name)
-                  const variant: 'ok' | 'warn' | 'muted' = g.score >= 80 ? 'ok' : g.score >= 60 ? 'warn' : 'muted'
-                  return (
-                    <label
-                      key={g.name}
-                      data-testid={`seeder-group-row-${g.name}`}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
-                        borderRadius: 6, border: `1px solid ${checked ? tokens.accent : tokens.border}`,
-                        background: checked ? 'rgba(220,38,38,0.08)' : 'transparent', cursor: 'pointer',
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        data-testid={`seeder-group-check-${g.name}`}
-                        onChange={(e) => {
-                          if (e.target.checked) setSelectedGroups((prev) => Array.from(new Set([...prev, g.name])))
-                          else setSelectedGroups((prev) => prev.filter((n) => n !== g.name))
-                        }}
-                      />
-                      <span style={{ flex: 1, fontSize: 12, color: tokens.text }}>{g.name}</span>
-                      <span style={{ fontSize: 11, color: tokens.muted }}>{g.event_count} event(s)</span>
-                      <span style={badge(variant)}>{g.score}</span>
-                    </label>
-                  )
-                })}
-                {testResult.scored_groups.length === 0 && (
-                  <span style={{ fontSize: 11, color: tokens.muted }}>No groups scored — try adjusting the date window.</span>
-                )}
-              </div>
-              {testResult.all_group_names_seen.length > testResult.scored_groups.length && (
-                <details style={{ fontSize: 11, color: tokens.muted }}>
-                  <summary style={{ cursor: 'pointer' }}>All group names seen ({testResult.all_group_names_seen.length})</summary>
-                  <ul style={{ margin: '6px 0 0', paddingLeft: 16 }}>
-                    {testResult.all_group_names_seen.map((g) => <li key={g}>{g}</li>)}
-                  </ul>
-                </details>
-              )}
-            </div>
-          )}
+          <input id="seeder-group" data-testid="seeder-group" style={styles.input} value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="e.g. BMW Race Driver Series" />
         </div>
 
         <div style={styles.grid2}>
@@ -434,6 +344,103 @@ export default function SeriesSeederNewJobPage() {
             <label style={styles.label} htmlFor="seeder-to">Date to</label>
             <input id="seeder-to" data-testid="seeder-to" type="date" style={styles.input} value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
           </div>
+        </div>
+
+        <button
+          type="button"
+          data-testid="seeder-test"
+          onClick={testConnection}
+          disabled={!canTest || testing}
+          style={{ ...styles.btn, ...((!canTest || testing) ? styles.btnDisabled : {}), width: '100%' }}
+        >
+          {testing ? 'Scanning…' : 'Find groups'}
+        </button>
+
+        {/* Wait indicator — same pattern as Status page's 'discovering'
+            badge: accent badge + muted explanation line. */}
+        {testing && (
+          <div
+            role="status"
+            aria-live="polite"
+            data-testid="seeder-scanning"
+            style={{ ...styles.row, padding: '6px 0' }}
+          >
+            <span style={badge('accent')}>scanning</span>
+            <span style={{ fontSize: 11, color: tokens.muted }}>
+              Probing every event in the date window — this can take 30–60s on a wide range.
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* [BUG-450] Step 2 — Group selection (only after Find Groups
+          finishes). Hidden until there's a result so the form stays
+          short on first load. */}
+      {testResult && (
+        <div style={{ ...styles.card, ...styles.section }} data-testid="seeder-step-groups">
+          <div style={{ fontSize: 11, color: tokens.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Step 2 · Pick groups
+          </div>
+          <div style={{ fontSize: 12, color: tokens.muted }}>
+            Probed {testResult.probed} of {testResult.events_in_window} event(s) ·
+            {' '}{testResult.scored_groups.length} group(s) above score 30
+            {testResult.all_group_names_seen.length > testResult.scored_groups.length &&
+              ` · ${testResult.all_group_names_seen.length - testResult.scored_groups.length} hidden as noise`}
+          </div>
+          <p style={{ fontSize: 12, color: tokens.text, margin: 0 }}>
+            Tick the group(s) that belong to <strong>{seriesName || 'this series'}</strong>.
+            Multiple groups (e.g. classes) → all imported under one series.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {testResult.scored_groups.map((g) => {
+              const checked = selectedGroups.includes(g.name)
+              const variant: 'ok' | 'warn' | 'muted' = g.score >= 80 ? 'ok' : g.score >= 60 ? 'warn' : 'muted'
+              return (
+                <label
+                  key={g.name}
+                  data-testid={`seeder-group-row-${g.name}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
+                    borderRadius: 6, border: `1px solid ${checked ? tokens.accent : tokens.border}`,
+                    background: checked ? 'rgba(220,38,38,0.08)' : 'transparent', cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    data-testid={`seeder-group-check-${g.name}`}
+                    onChange={(e) => {
+                      if (e.target.checked) setSelectedGroups((prev) => Array.from(new Set([...prev, g.name])))
+                      else setSelectedGroups((prev) => prev.filter((n) => n !== g.name))
+                    }}
+                  />
+                  <span style={{ flex: 1, fontSize: 12, color: tokens.text }}>{g.name}</span>
+                  <span style={{ fontSize: 11, color: tokens.muted }}>{g.event_count} event(s)</span>
+                  <span style={badge(variant)}>{g.score}</span>
+                </label>
+              )
+            })}
+            {testResult.scored_groups.length === 0 && (
+              <span style={{ fontSize: 11, color: tokens.muted }}>No groups scored — try adjusting the date window.</span>
+            )}
+          </div>
+          {testResult.all_group_names_seen.length > testResult.scored_groups.length && (
+            <details style={{ fontSize: 11, color: tokens.muted }}>
+              <summary style={{ cursor: 'pointer' }}>All group names seen ({testResult.all_group_names_seen.length})</summary>
+              <ul style={{ margin: '6px 0 0', paddingLeft: 16 }}>
+                {testResult.all_group_names_seen.map((g) => <li key={g}>{g}</li>)}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+
+      {/* [BUG-450] Step 3 — Target + start. Only shown after Step 1
+          + 2 are done (groups picked) so the form stays focused. */}
+      {selectedGroups.length > 0 && (
+      <div style={{ ...styles.card, ...styles.section }} data-testid="seeder-step-target">
+        <div style={{ fontSize: 11, color: tokens.muted, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          Step 3 · Target &amp; start
         </div>
 
         <div style={styles.section}>
@@ -500,6 +507,7 @@ export default function SeriesSeederNewJobPage() {
           </button>
         </div>
       </div>
+      )}
     </div>
   )
 }
