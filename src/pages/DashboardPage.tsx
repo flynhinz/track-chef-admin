@@ -21,6 +21,22 @@ interface HeroStats {
 
 interface SyncStatus { last_updated_at: string | null; state: string | null }
 
+// [BUG-512] Each card maps to one tiny COUNT query. We fan them out with
+// Promise.allSettled so a single failure (slow table, EF timeout, etc.)
+// shows "—" on that one card instead of stalling the whole panel on "…".
+const HERO_QUERIES: { key: keyof HeroStats; sql: string }[] = [
+  { key: 'total_tenants',    sql: 'SELECT COUNT(*)::int AS n FROM tenants' },
+  { key: 'total_users',      sql: 'SELECT COUNT(*)::int AS n FROM profiles' },
+  { key: 'total_series',     sql: 'SELECT COUNT(*)::int AS n FROM series' },
+  { key: 'total_events',     sql: 'SELECT COUNT(*)::int AS n FROM events' },
+  { key: 'total_results',    sql: 'SELECT COUNT(*)::int AS n FROM race_results' },
+  { key: 'total_cars',       sql: 'SELECT COUNT(*)::int AS n FROM cars' },
+  { key: 'total_entries',    sql: 'SELECT COUNT(*)::int AS n FROM series_entries' },
+  { key: 'total_circuits',   sql: 'SELECT COUNT(*)::int AS n FROM circuits' },
+  { key: 'invites_accepted', sql: 'SELECT COUNT(*)::int AS n FROM invite_tokens WHERE is_used = true' },
+  { key: 'invites_pending',  sql: 'SELECT COUNT(*)::int AS n FROM invite_tokens WHERE is_used = false AND expires_at > now()' },
+]
+
 // [BUG-317 #3] Signups search + sortable columns.
 type SignupField = 'email' | 'display_name' | 'tenant' | 'created_at'
 type SortDir = 'asc' | 'desc'
@@ -50,20 +66,6 @@ function filterSignups(rows: Signup[], q: string): Signup[] {
   )
 }
 
-const HERO_SQL = `
-  SELECT
-    (SELECT COUNT(DISTINCT id) FROM tenants) as total_tenants,
-    (SELECT COUNT(DISTINCT id) FROM profiles) as total_users,
-    (SELECT COUNT(DISTINCT id) FROM series) as total_series,
-    (SELECT COUNT(DISTINCT id) FROM events) as total_events,
-    (SELECT COUNT(DISTINCT id) FROM race_results) as total_results,
-    (SELECT COUNT(DISTINCT id) FROM cars) as total_cars,
-    (SELECT COUNT(DISTINCT id) FROM series_entries) as total_entries,
-    (SELECT COUNT(DISTINCT id) FROM circuits) as total_circuits,
-    (SELECT COUNT(*) FROM invite_tokens WHERE is_used = true) as invites_accepted,
-    (SELECT COUNT(*) FROM invite_tokens WHERE is_used = false AND expires_at > now()) as invites_pending
-`
-
 const SYNC_SQL = `SELECT last_updated_at, state FROM speedhive_sync_status ORDER BY last_updated_at DESC LIMIT 1`
 
 export default function DashboardPage() {
@@ -78,13 +80,34 @@ export default function DashboardPage() {
   const [signupSortDir, setSignupSortDir] = useState<SortDir>('desc')
 
   useEffect(() => {
+    // [BUG-512] Fan out the 10 hero counters in parallel so one slow / failing
+    // table can't stall the whole panel. allSettled → failed query shows 0.
+    const heroPromise = Promise.allSettled(
+      HERO_QUERIES.map((q) => adminApi.selectRows<{ n: number }>(q.sql)),
+    ).then((settled) => {
+      const out: HeroStats = {
+        total_tenants: 0, total_users: 0, total_series: 0, total_events: 0,
+        total_results: 0, total_cars: 0, total_entries: 0, total_circuits: 0,
+        invites_accepted: 0, invites_pending: 0,
+      }
+      settled.forEach((r, i) => {
+        const key = HERO_QUERIES[i].key
+        if (r.status === 'fulfilled') {
+          out[key] = Number(r.value?.[0]?.n ?? 0)
+        } else {
+          console.error(`[dashboard] hero query failed (${key}):`, r.reason)
+        }
+      })
+      return out
+    })
+
     Promise.all([
-      adminApi.selectRows<HeroStats>(HERO_SQL).catch(() => []),
-      adminApi.selectRows<SyncStatus>(SYNC_SQL).catch(() => []),
-      adminApi.getAllUsers().catch(() => []),
-      adminApi.listBuilds().catch(() => []),
-    ]).then(([heroRows, syncRows, users, builds]) => {
-      setHero((heroRows as HeroStats[])[0] ?? null)
+      heroPromise,
+      adminApi.selectRows<SyncStatus>(SYNC_SQL).catch((e) => { console.error('[dashboard] sync query failed:', e); return [] }),
+      adminApi.getAllUsers().catch((e) => { console.error('[dashboard] getAllUsers failed:', e); return [] }),
+      adminApi.listBuilds().catch((e) => { console.error('[dashboard] listBuilds failed:', e); return [] }),
+    ]).then(([heroResult, syncRows, users, builds]) => {
+      setHero(heroResult)
       setSync((syncRows as SyncStatus[])[0] ?? null)
       setAllUsers((users ?? []) as Signup[])
       const sortedBuilds = [...(builds ?? [])].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
@@ -104,11 +127,13 @@ export default function DashboardPage() {
     else { setSignupSortField(f); setSignupSortDir(f === 'created_at' ? 'desc' : 'asc') }
   }
 
+  // [BUG-512] Once loading completes a missing value renders "—" — never
+  // a stuck "…". The "…" only appears while we're still actually fetching.
   const heroCard = (icon: string, value: number | undefined, label: string, color = '#DC2626') => (
     <div style={{ background: '#141414', border: '1px solid #2A2A2A', borderRadius: 8, padding: 20, minWidth: 170, flex: '1 1 170px' }}>
       <div style={{ fontSize: 22, marginBottom: 6 }}>{icon}</div>
       <div style={{ fontSize: 32, fontWeight: 700, color, fontFamily: 'monospace', lineHeight: 1 }}>
-        {loading || value === undefined ? '…' : value.toLocaleString('en-NZ')}
+        {loading ? '…' : value === undefined ? '—' : value.toLocaleString('en-NZ')}
       </div>
       <div style={{ fontSize: 12, color: '#888', marginTop: 6 }}>{label}</div>
     </div>
