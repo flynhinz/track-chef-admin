@@ -164,12 +164,23 @@ export const adminApi = {
   recentEvents: (p?: { limit?: number; event_name?: string; tenant_id?: string }) => callAdmin('recent_events', p ?? {}),
   usageStats: (): Promise<{ dau: number; wau: number; mau: number; top_events_7d: { name: string; count: number }[]; top_pages_7d: { name: string; count: number }[] }> => callAdmin('usage_stats'),
   runSql: (sql: string): Promise<{ kind: 'rows'; rows: Record<string, unknown>[] } | { kind: 'command'; command: string; affected: number } | { kind: 'error'; error: string; sqlstate?: string }> => callAdmin('run_sql', { sql }),
-  // [BUG-454] Thin SELECT wrapper for the new tab dashboards. Throws on
-  // anything that isn't a rows result so callers can `await` and read .rows.
+  // [BUG-454] Thin SELECT wrapper for the new tab dashboards.
+  // [BUG-514] Tolerate the multiple response shapes the run_sql EF can
+  // produce (legacy {kind:'rows',rows:[...]}, plain {rows:[...]},
+  // PostgREST-style {data:[...]}, or just an array). Anything else gets
+  // logged + thrown with the raw payload so the next regression is
+  // diagnosable from the browser console without guessing.
   selectRows: async <T = Record<string, unknown>>(sql: string): Promise<T[]> => {
-    const r = await callAdmin('run_sql', { sql })
-    if (r?.kind === 'rows') return (r.rows ?? []) as T[]
-    if (r?.kind === 'error') throw new Error(r.error || 'SQL error')
+    const r: unknown = await callAdmin('run_sql', { sql })
+    if (Array.isArray(r)) return r as T[]
+    if (r && typeof r === 'object') {
+      const o = r as Record<string, unknown>
+      if (o.kind === 'error') throw new Error(String(o.error ?? 'SQL error'))
+      if (Array.isArray(o.rows)) return o.rows as T[]
+      if (Array.isArray(o.data)) return o.data as T[]
+      if (Array.isArray(o.result)) return o.result as T[]
+    }
+    console.error('[selectRows] unexpected SQL response shape:', r, 'sql:', sql)
     throw new Error('Unexpected SQL response')
   },
   reportTestRun: (p: { build_ref: string; kind: 'unit' | 'regression' | 'e2e'; total: number; passed: number; failed: number; skipped?: number; commit_hash?: string; details_url?: string }) => callAdmin('report_test_run', p),
