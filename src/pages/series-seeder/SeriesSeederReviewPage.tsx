@@ -8,6 +8,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { styles, tokens, badge } from './seederStyles'
+// [BUG-515] Fuzzy fallback when transponder + race-number don't match —
+// catches "Stephanie Chambers" vs "Steph Chambers" / "Smith" vs "Smyth"
+// cases that previously created duplicate driver entries.
+import { nameScore } from '../../lib/fuzzy'
 
 interface StagedSession {
   speedhive_session_id: number
@@ -54,6 +58,15 @@ interface ExistingEntry {
 }
 
 type DriverAction = 'create' | 'skip' | 'link'
+type MatchReason = 'transponder' | 'race_number' | 'name' | 'manual' | null
+interface DriverDecision {
+  action: DriverAction
+  link_to_entry_id?: string
+  // [BUG-515] What we matched on + how confident — surfaced in the
+  // row UI and persisted in admin_decisions for the EF to log.
+  match_reason?: MatchReason
+  match_score?: number
+}
 
 export default function SeriesSeederReviewPage() {
   const { jobId } = useParams<{ jobId: string }>()
@@ -62,7 +75,7 @@ export default function SeriesSeederReviewPage() {
   const [job, setJob] = useState<JobRow | null>(null)
   const [existingEntries, setExistingEntries] = useState<ExistingEntry[]>([])
   const [eventInclude, setEventInclude] = useState<Record<string, boolean>>({})
-  const [driverActions, setDriverActions] = useState<Record<string, { action: DriverAction; link_to_entry_id?: string }>>({})
+  const [driverActions, setDriverActions] = useState<Record<string, DriverDecision>>({})
   const [submitting, setSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [authedUserId, setAuthedUserId] = useState<string | null>(null)
@@ -115,7 +128,7 @@ export default function SeriesSeederReviewPage() {
     if (initialised) return
     if (!stagedEvents.length) return
     const ev: Record<string, boolean> = {}
-    const drv: Record<string, { action: DriverAction; link_to_entry_id?: string }> = {}
+    const drv: Record<string, DriverDecision> = {}
     // [BUG-513] Prefer same-series matches before falling back tenant-wide,
     // so a backfill into a new series still links to the *current*-series
     // entry when one exists.
@@ -123,20 +136,52 @@ export default function SeriesSeederReviewPage() {
     const sameSeries = targetSeriesId ? existingEntries.filter((x) => x.series_id === targetSeriesId) : []
     const tieredFind = (pred: (x: ExistingEntry) => boolean): ExistingEntry | undefined =>
       sameSeries.find(pred) ?? existingEntries.find(pred)
+    // [BUG-515] Tiered fuzzy fallback after exact tp/race_number tries.
+    // Walk every existing entry, compute nameScore, prefer same-series
+    // when scores tie. Auto-link at >=75; if 60-74 still link but mark
+    // as 'manual' so the coordinator visually reviews.
+    const bestNameMatch = (incoming: string): { entry: ExistingEntry; score: number } | null => {
+      if (!incoming.trim()) return null
+      let best: { entry: ExistingEntry; score: number; sameSeries: boolean } | null = null
+      for (const x of existingEntries) {
+        if (!x.driver_name) continue
+        const score = nameScore(incoming, x.driver_name)
+        const isSame = !!targetSeriesId && x.series_id === targetSeriesId
+        if (
+          !best ||
+          score > best.score ||
+          (score === best.score && isSame && !best.sameSeries)
+        ) {
+          best = { entry: x, score, sameSeries: isSame }
+        }
+      }
+      return best && best.score >= 60 ? { entry: best.entry, score: best.score } : null
+    }
     for (const e of stagedEvents) {
       ev[String(e.speedhive_event_id)] = true
       for (const d of e.drivers) {
-        let auto: { action: DriverAction; link_to_entry_id?: string } = { action: 'create' }
+        let auto: DriverDecision = { action: 'create' }
         if (existingEntries.length > 0) {
           const byTp = d.transponder
             ? tieredFind((x) => !!x.speedhive_transponder && x.speedhive_transponder === d.transponder)
             : undefined
-          if (byTp) auto = { action: 'link', link_to_entry_id: byTp.id }
+          if (byTp) auto = { action: 'link', link_to_entry_id: byTp.id, match_reason: 'transponder', match_score: 100 }
           else {
             const byNum = d.race_number
               ? tieredFind((x) => x.race_number === d.race_number)
               : undefined
-            if (byNum) auto = { action: 'link', link_to_entry_id: byNum.id }
+            if (byNum) auto = { action: 'link', link_to_entry_id: byNum.id, match_reason: 'race_number', match_score: 95 }
+            else {
+              const byName = bestNameMatch(d.name)
+              if (byName && byName.score >= 75) {
+                auto = { action: 'link', link_to_entry_id: byName.entry.id, match_reason: 'name', match_score: byName.score }
+              } else if (byName) {
+                // 60-74 — surface as a hint but keep on 'create' so a
+                // wrong fuzzy hit doesn't silently merge. Coordinator
+                // sees the suggestion in the row and confirms.
+                auto = { action: 'create', match_reason: 'name', match_score: byName.score, link_to_entry_id: byName.entry.id }
+              }
+            }
           }
         }
         drv[d.key] = auto
@@ -243,7 +288,20 @@ export default function SeriesSeederReviewPage() {
         {uniqueDrivers.length === 0 && <p style={styles.sub}>No drivers found in staged data.</p>}
         <div>
           {uniqueDrivers.map((d) => {
-            const cur = driverActions[d.key] ?? { action: 'create' as DriverAction }
+            const cur: DriverDecision = driverActions[d.key] ?? { action: 'create' }
+            // [BUG-515] What-we-matched-on hint. The auto-match writes
+            // match_reason + match_score even when we didn't auto-link
+            // (60-74 fuzzy hits stay on 'create' but surface here so
+            // the coordinator can flip to Link with one click).
+            const matched = cur.link_to_entry_id
+              ? existingEntries.find((x) => x.id === cur.link_to_entry_id)
+              : undefined
+            const reasonLabel: Record<NonNullable<MatchReason>, string> = {
+              transponder: 'transponder match',
+              race_number: 'race # match',
+              name: 'name match',
+              manual: 'manual',
+            }
             return (
               <div
                 key={d.key}
@@ -255,6 +313,38 @@ export default function SeriesSeederReviewPage() {
                   <div style={{ color: tokens.muted, fontSize: 11 }}>
                     #{d.race_number ?? '—'}{d.transponder ? ` · TP ${d.transponder}` : ''}{d.class ? ` · ${d.class}` : ''}
                   </div>
+                  {(matched || (cur.match_reason === 'name' && cur.link_to_entry_id)) && cur.match_reason && cur.match_score !== undefined && (
+                    <div
+                      data-testid={`seeder-driver-match-${d.key}`}
+                      style={{ marginTop: 4, fontSize: 11, color: tokens.muted, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
+                    >
+                      <span style={badge(cur.match_score >= 90 ? 'ok' : cur.match_score >= 75 ? 'ok' : 'warn')}>
+                        {cur.match_score}%
+                      </span>
+                      <span>
+                        {cur.action === 'link' ? '→ linked to ' : '→ suggested '}
+                        <strong style={{ color: tokens.text }}>
+                          {matched?.driver_name ?? '—'}
+                        </strong>
+                        {matched?.race_number ? ` #${matched.race_number}` : ''}
+                        {matched?.series_name ? ` — ${matched.series_name}` : ''}
+                        {' '}({reasonLabel[cur.match_reason]})
+                        {cur.action !== 'link' && cur.match_score >= 60 && (
+                          <button
+                            type="button"
+                            data-testid={`seeder-driver-accept-${d.key}`}
+                            onClick={() => setDriverActions((prev) => ({
+                              ...prev,
+                              [d.key]: { ...prev[d.key], action: 'link', match_reason: prev[d.key]?.match_reason ?? 'manual' },
+                            }))}
+                            style={{ ...styles.btnGhost, padding: '2px 8px', fontSize: 11, marginLeft: 6 }}
+                          >
+                            Accept link
+                          </button>
+                        )}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <select
                   data-testid={`seeder-driver-action-${d.key}`}
@@ -263,7 +353,12 @@ export default function SeriesSeederReviewPage() {
                     const v = e.target.value as DriverAction
                     setDriverActions((prev) => ({
                       ...prev,
-                      [d.key]: { action: v, link_to_entry_id: v === 'link' ? prev[d.key]?.link_to_entry_id : undefined },
+                      [d.key]: {
+                        ...prev[d.key],
+                        action: v,
+                        link_to_entry_id: v === 'link' ? prev[d.key]?.link_to_entry_id : undefined,
+                        match_reason: v === 'link' ? (prev[d.key]?.match_reason ?? 'manual') : prev[d.key]?.match_reason,
+                      },
                     }))
                   }}
                   style={{ ...styles.select, padding: '4px 8px' }}
@@ -279,7 +374,7 @@ export default function SeriesSeederReviewPage() {
                       value={cur.link_to_entry_id ?? ''}
                       onChange={(e) => setDriverActions((prev) => ({
                         ...prev,
-                        [d.key]: { action: 'link', link_to_entry_id: e.target.value },
+                        [d.key]: { ...prev[d.key], action: 'link', link_to_entry_id: e.target.value, match_reason: 'manual' },
                       }))}
                       style={{ ...styles.select, padding: '4px 8px' }}
                     >

@@ -13,6 +13,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { styles, tokens, badge } from './seederStyles'
+// [BUG-515] Fuzzy match the typed series-name + derived season against
+// the tenant's existing series so a backfill auto-suggests linking
+// instead of letting the coordinator silently create a duplicate.
+import { canonSeason, nameScore, rankMatches, seasonFromDates } from '../../lib/fuzzy'
 
 interface SeedPreset {
   series_name: string
@@ -513,15 +517,14 @@ export default function SeriesSeederNewJobPage() {
         {!isNewTenant && (
           <div style={styles.section}>
             <label style={styles.label}>Target series (optional — backfill into existing)</label>
-            <select
-              data-testid="seeder-target-series"
-              style={styles.select}
+            <SeriesMatchPicker
+              tenantSeries={tenantSeries}
+              seriesName={seriesName}
+              dateFrom={dateFrom}
+              dateTo={dateTo}
               value={targetSeriesId}
-              onChange={(e) => setTargetSeriesId(e.target.value)}
-            >
-              <option value="">Create new series</option>
-              {tenantSeries.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.season})</option>)}
-            </select>
+              onChange={setTargetSeriesId}
+            />
           </div>
         )}
 
@@ -544,5 +547,101 @@ export default function SeriesSeederNewJobPage() {
       </div>
       )}
     </div>
+  )
+}
+
+// [BUG-515] Fuzzy target-series picker. Combines a name score (0-100)
+// with a season match (+15 boost when the canonicalised seasons agree)
+// and surfaces:
+//   • a banner with the top suggestion + score + "what matched"
+//   • the dropdown reordered desc by score, each option carrying its %
+//   • auto-select the top suggestion when score >= 75 and the user
+//     hasn't already manually chosen something
+// Fixes the regression where a backfill silently created a duplicate
+// series because the coordinator didn't spot the existing one in a
+// long alphabetical dropdown.
+function SeriesMatchPicker({
+  tenantSeries, seriesName, dateFrom, dateTo, value, onChange,
+}: {
+  tenantSeries: { id: string; name: string; season: string }[]
+  seriesName: string
+  dateFrom: string
+  dateTo: string
+  value: string
+  onChange: (id: string) => void
+}) {
+  const derivedSeason = useMemo(() => seasonFromDates(dateFrom, dateTo), [dateFrom, dateTo])
+
+  // Score = name fuzzy + season-equality boost. Name carries the bulk
+  // of the signal; season disambiguates same-name across years.
+  const ranked = useMemo(() => {
+    if (!seriesName.trim() || tenantSeries.length === 0) return []
+    const targetSeasonCanon = canonSeason(derivedSeason)
+    return rankMatches(seriesName, tenantSeries, (s) => s.name)
+      .map(({ item, score }) => {
+        const seasonBoost =
+          targetSeasonCanon && canonSeason(item.season) === targetSeasonCanon ? 15 : 0
+        return { item, score: Math.min(100, score + seasonBoost), seasonBoost }
+      })
+      .sort((a, b) => b.score - a.score)
+  }, [seriesName, tenantSeries, derivedSeason])
+
+  const top = ranked[0]
+  const userTouched = value !== ''
+
+  // Auto-pick on a confident match — but only when the user hasn't
+  // already chosen something explicitly. Re-runs as the typed name
+  // tightens the score above the threshold.
+  useEffect(() => {
+    if (userTouched) return
+    if (top && top.score >= 75) onChange(top.item.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [top?.item.id, top?.score])
+
+  const variant = (s: number): 'ok' | 'warn' | 'muted' =>
+    s >= 90 ? 'ok' : s >= 75 ? 'ok' : s >= 60 ? 'warn' : 'muted'
+
+  return (
+    <>
+      {top && top.score >= 60 && (
+        <div
+          data-testid="seeder-series-match-banner"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', marginBottom: 6,
+            border: `1px solid ${top.score >= 75 ? tokens.accent : tokens.border}`,
+            background: top.score >= 75 ? 'rgba(220,38,38,0.08)' : 'transparent',
+            borderRadius: 6, fontSize: 12, color: tokens.text,
+          }}
+        >
+          <span style={badge(variant(top.score))}>{top.score}%</span>
+          <span style={{ flex: 1 }}>
+            Matched <strong>{top.item.name}</strong> ({top.item.season || '—'})
+            {' '}— name “{seriesName}” vs “{top.item.name}”
+            {derivedSeason && top.seasonBoost > 0 && (
+              <> · season <strong>{canonSeason(derivedSeason)}</strong> agrees</>
+            )}
+            {top.score >= 75
+              ? ' · auto-selected (untick or change below to override)'
+              : ' · review and pick below if this is the right one'}
+          </span>
+        </div>
+      )}
+      <select
+        data-testid="seeder-target-series"
+        style={styles.select}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">Create new series</option>
+        {(ranked.length > 0 ? ranked.map((r) => r.item) : tenantSeries).map((s) => {
+          const score = ranked.find((r) => r.item.id === s.id)?.score
+          return (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.season}){score !== undefined ? ` · ${score}%` : ''}
+            </option>
+          )
+        })}
+      </select>
+    </>
   )
 }
