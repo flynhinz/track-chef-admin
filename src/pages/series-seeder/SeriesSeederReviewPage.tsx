@@ -90,8 +90,13 @@ export default function SeriesSeederReviewPage() {
   // [BUG-513] Look up existing entries across the coordinator's whole
   // tenant — not just the target series. A backfill / new-season import
   // typically seeds into an empty series, but the same drivers already
-  // exist on the coordinator's *current* series in the same tenant. The
-  // picker label includes the source series so it's clear what we link.
+  // exist on the coordinator's *current* series in the same tenant.
+  // [BUG-516] Fetch series_entries + series in two plain queries and
+  // join client-side. The previous embedded-relation syntax
+  // ("series:series_id(name, season)") was 400-ing through PostgREST,
+  // which left existingEntries silently empty — every staged driver
+  // then fell through to "Create new entry" even when transponders
+  // matched exactly. Separate queries always work.
   useEffect(() => {
     if (!jobId) return
     void (async () => {
@@ -99,24 +104,39 @@ export default function SeriesSeederReviewPage() {
       if (error) { console.error('[seeder] review load', error); return }
       setJob(data as JobRow)
       const targetTenantId = (data as JobRow).target_tenant_id
-      if (targetTenantId) {
-        const { data: ents, error: entsErr } = await (supabase as any)
+      if (!targetTenantId) return
+      const [{ data: ents, error: entsErr }, { data: srs, error: srsErr }] = await Promise.all([
+        (supabase as any)
           .from('series_entries')
-          .select('id, driver_name, race_number, speedhive_transponder, series_id, series:series_id(name, season)')
+          .select('id, driver_name, race_number, speedhive_transponder, series_id')
           .eq('tenant_id', targetTenantId)
-          .eq('is_active', true)
-        if (entsErr) console.error('[seeder] series_entries load', entsErr)
-        const flattened: ExistingEntry[] = (ents ?? []).map((r: any) => ({
+          .eq('is_active', true),
+        (supabase as any)
+          .from('series')
+          .select('id, name, season')
+          .eq('tenant_id', targetTenantId),
+      ])
+      if (entsErr) console.error('[seeder] series_entries load', entsErr)
+      if (srsErr) console.error('[seeder] series load', srsErr)
+      const seriesById = new Map<string, { name: string | null; season: string | null }>(
+        ((srs ?? []) as { id: string; name: string | null; season: string | null }[]).map(
+          (s) => [s.id, { name: s.name, season: s.season }],
+        ),
+      )
+      const flattened: ExistingEntry[] = (ents ?? []).map((r: any) => {
+        const s = r.series_id ? seriesById.get(r.series_id) : undefined
+        return {
           id: r.id,
           driver_name: r.driver_name,
           race_number: r.race_number,
           speedhive_transponder: r.speedhive_transponder,
           series_id: r.series_id,
-          series_name: r.series?.name ?? null,
-          series_season: r.series?.season ?? null,
-        }))
-        setExistingEntries(flattened)
-      }
+          series_name: s?.name ?? null,
+          series_season: s?.season ?? null,
+        }
+      })
+      console.info(`[seeder] loaded ${flattened.length} existing entries for tenant ${targetTenantId}`)
+      setExistingEntries(flattened)
     })()
   }, [jobId])
 
