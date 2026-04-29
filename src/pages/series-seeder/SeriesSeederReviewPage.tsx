@@ -46,6 +46,11 @@ interface ExistingEntry {
   driver_name: string | null
   race_number: string | null
   speedhive_transponder: string | null
+  // [BUG-513] Link source series so the picker can show which series an
+  // existing entry came from when we widen the lookup tenant-wide.
+  series_id: string | null
+  series_name: string | null
+  series_season: string | null
 }
 
 type DriverAction = 'create' | 'skip' | 'link'
@@ -69,21 +74,35 @@ export default function SeriesSeederReviewPage() {
   }, [])
 
   // Job + existing entries.
+  // [BUG-513] Look up existing entries across the coordinator's whole
+  // tenant — not just the target series. A backfill / new-season import
+  // typically seeds into an empty series, but the same drivers already
+  // exist on the coordinator's *current* series in the same tenant. The
+  // picker label includes the source series so it's clear what we link.
   useEffect(() => {
     if (!jobId) return
     void (async () => {
       const { data, error } = await (supabase as any).from('series_import_jobs').select('*').eq('id', jobId).single()
       if (error) { console.error('[seeder] review load', error); return }
       setJob(data as JobRow)
-      const targetSeriesId = (data as JobRow).target_series_id
-      if (targetSeriesId) {
+      const targetTenantId = (data as JobRow).target_tenant_id
+      if (targetTenantId) {
         const { data: ents, error: entsErr } = await (supabase as any)
           .from('series_entries')
-          .select('id, driver_name, race_number, speedhive_transponder')
-          .eq('series_id', targetSeriesId)
+          .select('id, driver_name, race_number, speedhive_transponder, series_id, series:series_id(name, season)')
+          .eq('tenant_id', targetTenantId)
           .eq('is_active', true)
         if (entsErr) console.error('[seeder] series_entries load', entsErr)
-        setExistingEntries((ents ?? []) as ExistingEntry[])
+        const flattened: ExistingEntry[] = (ents ?? []).map((r: any) => ({
+          id: r.id,
+          driver_name: r.driver_name,
+          race_number: r.race_number,
+          speedhive_transponder: r.speedhive_transponder,
+          series_id: r.series_id,
+          series_name: r.series?.name ?? null,
+          series_season: r.series?.season ?? null,
+        }))
+        setExistingEntries(flattened)
       }
     })()
   }, [jobId])
@@ -97,19 +116,26 @@ export default function SeriesSeederReviewPage() {
     if (!stagedEvents.length) return
     const ev: Record<string, boolean> = {}
     const drv: Record<string, { action: DriverAction; link_to_entry_id?: string }> = {}
+    // [BUG-513] Prefer same-series matches before falling back tenant-wide,
+    // so a backfill into a new series still links to the *current*-series
+    // entry when one exists.
+    const targetSeriesId = job?.target_series_id ?? null
+    const sameSeries = targetSeriesId ? existingEntries.filter((x) => x.series_id === targetSeriesId) : []
+    const tieredFind = (pred: (x: ExistingEntry) => boolean): ExistingEntry | undefined =>
+      sameSeries.find(pred) ?? existingEntries.find(pred)
     for (const e of stagedEvents) {
       ev[String(e.speedhive_event_id)] = true
       for (const d of e.drivers) {
         let auto: { action: DriverAction; link_to_entry_id?: string } = { action: 'create' }
         if (existingEntries.length > 0) {
           const byTp = d.transponder
-            ? existingEntries.find((x) => x.speedhive_transponder && x.speedhive_transponder === d.transponder)
-            : null
+            ? tieredFind((x) => !!x.speedhive_transponder && x.speedhive_transponder === d.transponder)
+            : undefined
           if (byTp) auto = { action: 'link', link_to_entry_id: byTp.id }
           else {
             const byNum = d.race_number
-              ? existingEntries.find((x) => x.race_number === d.race_number)
-              : null
+              ? tieredFind((x) => x.race_number === d.race_number)
+              : undefined
             if (byNum) auto = { action: 'link', link_to_entry_id: byNum.id }
           }
         }
@@ -119,7 +145,7 @@ export default function SeriesSeederReviewPage() {
     setEventInclude(ev)
     setDriverActions(drv)
     setInitialised(true)
-  }, [stagedEvents, existingEntries, initialised])
+  }, [stagedEvents, existingEntries, initialised, job?.target_series_id])
 
   const uniqueDrivers = useMemo(() => {
     const map = new Map<string, StagedDriver>()
@@ -258,11 +284,18 @@ export default function SeriesSeederReviewPage() {
                       style={{ ...styles.select, padding: '4px 8px' }}
                     >
                       <option value="">Pick entry…</option>
-                      {existingEntries.map((x) => (
-                        <option key={x.id} value={x.id}>
-                          {x.driver_name ?? '—'} #{x.race_number ?? '—'}
-                        </option>
-                      ))}
+                      {existingEntries.map((x) => {
+                        // [BUG-513] Show source series so coordinator can tell
+                        // which season's entry they're linking against.
+                        const seriesLabel = x.series_name
+                          ? ` — ${x.series_name}${x.series_season ? ` ${x.series_season}` : ''}`
+                          : ''
+                        return (
+                          <option key={x.id} value={x.id}>
+                            {x.driver_name ?? '—'} #{x.race_number ?? '—'}{seriesLabel}
+                          </option>
+                        )
+                      })}
                     </select>
                   )}
                 </div>
