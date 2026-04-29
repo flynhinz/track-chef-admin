@@ -2,8 +2,31 @@ import { useEffect, useState } from 'react'
 import { adminApi } from '../lib/adminApi'
 import { useSearchParams } from 'react-router-dom'
 
-interface User { id: string; email: string; display_name: string; personas: string[]; created_at: string; tenant_id: string | null; is_super_admin: boolean; must_reset_password?: boolean; tenants?: { name: string } }
+interface User { id: string; email: string; display_name: string; personas: string[]; created_at: string; tenant_id: string | null; is_super_admin: boolean; must_reset_password?: boolean; tenants?: { name: string }; active_persona?: string | null; car_question_answered?: boolean | null; race_results?: number }
 interface Tenant { id: string; name: string }
+
+// [BUG-454] Per-profile race-result count + onboarding flags. Merged into
+// the user list by id so the existing create/reset/delete flows stay intact.
+interface UserExtras {
+  id: string
+  active_persona: string | null
+  car_question_answered: boolean | null
+  race_results: number
+}
+
+const USER_EXTRAS_SQL = `
+  SELECT
+    p.id,
+    p.active_persona,
+    p.car_question_answered,
+    COUNT(DISTINCT rr.id)::int as race_results
+  FROM profiles p
+  LEFT JOIN series_entries se ON se.driver_id IN (
+    SELECT d.id FROM drivers d WHERE d.user_id = p.user_id
+  )
+  LEFT JOIN race_results rr ON rr.series_entry_id = se.id
+  GROUP BY p.id, p.active_persona, p.car_question_answered
+`
 
 const input = { background: '#141414', border: '1px solid #2A2A2A', borderRadius: 4, padding: '8px 12px', color: '#F5F5F5', fontSize: 13, outline: 'none' } as const
 const btn = { background: '#DC2626', border: 'none', color: '#F5F5F5', cursor: 'pointer', fontSize: 12, padding: '6px 14px', borderRadius: 4, fontWeight: 600 } as const
@@ -34,8 +57,14 @@ export default function UsersPage() {
     Promise.all([
       adminApi.getAllUsers(tenantFilter ?? undefined),
       adminApi.getAllTenants(),
-    ]).then(([u, t]) => {
-      setUsers(u ?? []); setFiltered(u ?? []); setTenants(t ?? []); setLoading(false)
+      adminApi.selectRows<UserExtras>(USER_EXTRAS_SQL).catch(() => [] as UserExtras[]),
+    ]).then(([u, t, extras]) => {
+      const byId = new Map(extras.map((e) => [e.id, e]))
+      const merged = (u ?? []).map((row: User) => {
+        const e = byId.get(row.id)
+        return e ? { ...row, active_persona: e.active_persona, car_question_answered: e.car_question_answered, race_results: e.race_results } : row
+      })
+      setUsers(merged); setFiltered(merged); setTenants(t ?? []); setLoading(false)
     })
   }
   useEffect(() => { load() }, [tenantFilter])
@@ -127,7 +156,7 @@ export default function UsersPage() {
       <input placeholder='Search by email, name or tenant...' value={search} onChange={e => setSearch(e.target.value)} style={{ ...input, width: 320, marginBottom: 16 }} />
       {loading ? <div style={{ color: '#888' }}>Loading...</div> : filtered.length === 0 ? <div style={{ color: '#888', padding: 40, textAlign: 'center' }}>No users found</div> : (
         <table style={{ width: '100%', borderCollapse: 'collapse' as const, fontSize: 13 }}>
-          <thead><tr>{th('Email')}{th('Name')}{th('Tenant')}{th('Personas')}{th('Created')}{th('Actions')}</tr></thead>
+          <thead><tr>{th('Email')}{th('Name')}{th('Tenant')}{th('Personas')}{th('Active')}{th('Car Q')}{th('Results')}{th('Created')}{th('Actions')}</tr></thead>
           <tbody>{filtered.map(u => (
             <tr key={u.id} style={{ borderBottom: '1px solid #1A1A1A' }}>
               <td style={{ padding: '10px 12px' }}>
@@ -138,6 +167,9 @@ export default function UsersPage() {
               <td style={{ padding: '10px 12px', color: '#888' }}>{u.display_name || '—'}</td>
               <td style={{ padding: '10px 12px', color: '#888' }}>{u.tenants?.name || '—'}</td>
               <td style={{ padding: '10px 12px', color: '#888', fontSize: 11 }}>{(u.personas ?? []).join(', ') || '—'}</td>
+              <td style={{ padding: '10px 12px', color: '#F5F5F5', fontSize: 11 }}>{u.active_persona ?? '—'}</td>
+              <td style={{ padding: '10px 12px', color: u.car_question_answered ? '#16A34A' : '#888', fontSize: 11 }}>{u.car_question_answered ? '✓' : '—'}</td>
+              <td style={{ padding: '10px 12px', color: '#F5F5F5', fontFamily: 'monospace', fontSize: 12 }}>{(u.race_results ?? 0).toLocaleString('en-NZ')}</td>
               <td style={{ padding: '10px 12px', color: '#888' }}>{new Date(u.created_at).toLocaleDateString('en-NZ')}</td>
               <td style={{ padding: '10px 12px', display: 'flex', gap: 6 }}>
                 <button onClick={() => { setResetFor(u); setResetPw(DEFAULT_PASSWORD); setResetMustReset(true) }} style={btnGhost}>Reset PW</button>

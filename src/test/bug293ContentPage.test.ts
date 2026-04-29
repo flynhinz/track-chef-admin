@@ -216,10 +216,13 @@ describe('[BUG-293] TopNav shows Content between Users and Builds', () => {
 
 // ── Coming-soon placeholders ────────────────────────────────────────────────
 
-describe('[BUG-293] Series renders a coming-soon placeholder', () => {
-  it('Series page uses the shared ComingSoon component', () => {
-    expect(SERIES).toMatch(/ComingSoon/)
-    expect(SERIES).toMatch(/testId=['"]series-coming-soon['"]/)
+// [BUG-454] Series moved from coming-soon to a wired SQL-driven table
+// (linked / unlinked driver counts, status badges, ⚠️ on artefacts).
+describe('[BUG-454] Series renders a wired SQL table', () => {
+  it('Series page reads from selectRows and renders the new columns', () => {
+    expect(SERIES).toMatch(/selectRows/)
+    expect(SERIES).toMatch(/data-testid=['"]series-table['"]/)
+    expect(SERIES).toMatch(/unlinked_entries/)
   })
   // [BUG-317 #7] Announcements moved from coming-soon to a wired
   // round_communications table — see bug317AdminPortal.test.ts.

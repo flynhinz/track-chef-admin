@@ -87,7 +87,7 @@ export default function BuildsPage() {
         </div>
       )}
 
-      {loading ? <div style={{ color: '#888' }}>Loading...</div> : builds.length === 0 ? <div style={{ color: '#888', padding: 40, textAlign: 'center' }}>No builds yet. Create one to start tracking bug fixes.</div> : (
+      {loading ? <div style={{ color: '#888' }}>Loading...</div> : builds.length === 0 ? <div style={{ color: '#888', padding: 40, textAlign: 'center' }}>No builds recorded yet. Builds will appear here when the CI pipeline is configured, or you can create one manually with <strong style={{ color: '#F5F5F5' }}>+ New Build</strong>.</div> : (
         <div style={{ display: 'grid', gap: 16 }}>
           {builds.map(b => {
             const total = b.admin_build_bugs?.length ?? 0

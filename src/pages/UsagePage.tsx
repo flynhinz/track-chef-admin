@@ -3,13 +3,39 @@ import { adminApi } from '../lib/adminApi'
 
 interface UsageStats { dau: number; wau: number; mau: number; top_events_7d: { name: string; count: number }[]; top_pages_7d: { name: string; count: number }[] }
 
+// [BUG-454] Client-error feed — shown below the usage charts as a proxy
+// for "is anything on fire" until proper persona / feature-adoption
+// charts land.
+interface ClientErrorRow {
+  scope: string | null
+  level: string | null
+  message: string | null
+  created_at: string
+}
+
+const CLIENT_ERRORS_SQL = `
+  SELECT scope, level, message, created_at
+  FROM client_errors
+  ORDER BY created_at DESC
+  LIMIT 20
+`
+
 export default function UsagePage() {
   const [stats, setStats] = useState<UsageStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [series, setSeries] = useState<{ day: string; count: number }[]>([])
+  const [errors, setErrors] = useState<ClientErrorRow[]>([])
+  const [errorsLoading, setErrorsLoading] = useState(true)
 
   useEffect(() => {
     adminApi.usageStats().then(s => { setStats(s); setLoading(false) }).catch(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    adminApi.selectRows<ClientErrorRow>(CLIENT_ERRORS_SQL)
+      .then((rows) => setErrors(rows))
+      .catch(() => setErrors([]))
+      .finally(() => setErrorsLoading(false))
   }, [])
 
   useEffect(() => {
@@ -86,6 +112,40 @@ export default function UsagePage() {
           <div style={{ fontSize: 12, color: '#888' }}>The Track-Chef app needs to insert into <code style={{ color: '#F5F5F5' }}>public.app_events</code> on key user actions. See the event taxonomy in ClickUp EPIC-94.</div>
         </div>
       )}
+
+      {/* [BUG-454] Client-error feed — proxy until feature-adoption + persona charts land. */}
+      <div data-testid='client-errors' style={{ background: '#141414', border: '1px solid #2A2A2A', borderRadius: 8, padding: 20, marginTop: 32 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Recent client errors</div>
+        <div style={{ fontSize: 11, color: '#888', marginBottom: 12 }}>
+          Last 20 rows from <code style={{ color: '#F5F5F5' }}>client_errors</code>. Persona distribution and DAU/WAU/MAU charts coming soon.
+        </div>
+        {errorsLoading ? (
+          <div style={{ color: '#888', fontSize: 12, padding: 8 }}>Loading…</div>
+        ) : errors.length === 0 ? (
+          <div style={{ color: '#888', fontSize: 12, padding: 8 }}>No client errors recorded.</div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse' as const, fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', padding: '6px 12px', color: '#888', fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2A2A2A', whiteSpace: 'nowrap' }}>Scope</th>
+                <th style={{ textAlign: 'left', padding: '6px 12px', color: '#888', fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2A2A2A' }}>Level</th>
+                <th style={{ textAlign: 'left', padding: '6px 12px', color: '#888', fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2A2A2A' }}>Message</th>
+                <th style={{ textAlign: 'left', padding: '6px 12px', color: '#888', fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2A2A2A', whiteSpace: 'nowrap' }}>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {errors.map((e, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #1A1A1A' }}>
+                  <td style={{ padding: '6px 12px', color: '#F5F5F5', fontFamily: 'monospace', fontSize: 11, whiteSpace: 'nowrap' }}>{e.scope ?? '—'}</td>
+                  <td style={{ padding: '6px 12px', color: e.level === 'error' ? '#DC2626' : e.level === 'warn' ? '#D97706' : '#888', fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>{e.level ?? '—'}</td>
+                  <td style={{ padding: '6px 12px', color: '#F5F5F5', fontFamily: 'monospace', fontSize: 11, maxWidth: 480, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.message ?? ''}>{e.message ?? '—'}</td>
+                  <td style={{ padding: '6px 12px', color: '#888', fontFamily: 'monospace', fontSize: 11, whiteSpace: 'nowrap' }}>{new Date(e.created_at).toLocaleString('en-NZ')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
   )
 }

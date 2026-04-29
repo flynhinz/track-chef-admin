@@ -62,7 +62,7 @@ describe('BuildsPage', () => {
   it('shows empty state when no builds exist', async () => {
     ;(adminApi.listBuilds as any).mockResolvedValue([])
     renderPage()
-    await waitFor(() => expect(screen.getByText(/No builds yet/i)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/No builds recorded yet/i)).toBeInTheDocument())
   })
 
   it('renders unit + regression + e2e test-run badges when present', async () => {

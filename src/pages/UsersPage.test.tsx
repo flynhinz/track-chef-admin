@@ -10,6 +10,9 @@ vi.mock('../lib/adminApi', () => ({
     createUser: vi.fn(async () => ({ success: true, user_id: 'new-id' })),
     resetPassword: vi.fn(async () => ({ success: true })),
     deleteProfile: vi.fn(async () => ({ success: true })),
+    // [BUG-454] New SELECT helper used to enrich the user table with
+    // active_persona / car_question_answered / race_results.
+    selectRows: vi.fn(async () => []),
   },
 }))
 

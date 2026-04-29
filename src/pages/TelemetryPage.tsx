@@ -3,12 +3,45 @@ import { adminApi } from '../lib/adminApi'
 
 interface AppEvent { id: number; event_name: string; page: string | null; persona: string | null; user_id: string | null; tenant_id: string | null; properties: Record<string, unknown>; created_at: string }
 
+// [BUG-454] Speedhive sync health — top-of-page panel (ahead of the
+// EF/EF-error rate work tracked in the "Coming soon" subtitle).
+interface SyncRow {
+  id: string
+  event_id: string | null
+  state: string | null
+  message: string | null
+  session_label: string | null
+  next_check_at: string | null
+  last_updated_at: string | null
+  event_name: string | null
+}
+
+const SYNC_SQL = `
+  SELECT
+    s.id, s.event_id, s.state, s.message, s.session_label,
+    s.next_check_at, s.last_updated_at,
+    e.name as event_name
+  FROM speedhive_sync_status s
+  LEFT JOIN events e ON e.id = s.event_id
+  ORDER BY s.last_updated_at DESC
+  LIMIT 10
+`
+
 export default function TelemetryPage() {
   const [events, setEvents] = useState<AppEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState<AppEvent | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(false)
+  const [syncRows, setSyncRows] = useState<SyncRow[]>([])
+  const [syncLoading, setSyncLoading] = useState(true)
+
+  useEffect(() => {
+    adminApi.selectRows<SyncRow>(SYNC_SQL)
+      .then((rows) => setSyncRows(rows))
+      .catch(() => setSyncRows([]))
+      .finally(() => setSyncLoading(false))
+  }, [])
 
   const load = (silent = false) => {
     if (!silent) setLoading(true)
@@ -28,9 +61,46 @@ export default function TelemetryPage() {
   const input = { background: '#141414', border: '1px solid #2A2A2A', borderRadius: 4, padding: '8px 12px', color: '#F5F5F5', fontSize: 13, outline: 'none' } as const
 
   return (
-    <div>
+    <div data-testid='telemetry-page'>
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Telemetry</h1>
-      <p style={{ color: '#888', fontSize: 14, marginBottom: 16 }}>Click-by-click event log. Every tracked action fires into <code style={{ color: '#F5F5F5' }}>app_events</code>. Showing last 500.</p>
+      <p style={{ color: '#888', fontSize: 14, marginBottom: 16 }}>
+        Speedhive sync health below; click-by-click <code style={{ color: '#F5F5F5' }}>app_events</code> log further down.
+        EF error rates and DB performance metrics coming soon.
+      </p>
+
+      {/* [BUG-454] Speedhive sync status — top of telemetry page. */}
+      <div data-testid='speedhive-sync' style={{ background: '#141414', border: '1px solid #2A2A2A', borderRadius: 8, padding: 16, marginBottom: 24 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Speedhive sync status (last 10)</div>
+        {syncLoading ? (
+          <div style={{ color: '#888', fontSize: 12, padding: 8 }}>Loading…</div>
+        ) : syncRows.length === 0 ? (
+          <div style={{ color: '#888', fontSize: 12, padding: 8 }}>No sync activity recorded.</div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse' as const, fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', padding: '6px 12px', color: '#888', fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2A2A2A' }}>Event</th>
+                <th style={{ textAlign: 'left', padding: '6px 12px', color: '#888', fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2A2A2A' }}>Last Run</th>
+                <th style={{ textAlign: 'left', padding: '6px 12px', color: '#888', fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2A2A2A' }}>State</th>
+                <th style={{ textAlign: 'left', padding: '6px 12px', color: '#888', fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2A2A2A' }}>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {syncRows.map((s) => (
+                <tr key={s.id} style={{ borderBottom: '1px solid #1A1A1A' }}>
+                  <td style={{ padding: '6px 12px', color: '#F5F5F5' }}>{s.event_name ?? '—'}</td>
+                  <td style={{ padding: '6px 12px', color: '#888', fontFamily: 'monospace', fontSize: 11 }}>{s.last_updated_at ? new Date(s.last_updated_at).toLocaleString('en-NZ') : '—'}</td>
+                  <td style={{ padding: '6px 12px', color: s.state === 'polling' ? '#16A34A' : s.state === 'error' ? '#DC2626' : '#888', fontSize: 11, textTransform: 'uppercase', fontWeight: 600 }}>{s.state ?? '—'}</td>
+                  <td style={{ padding: '6px 12px', color: '#888', fontSize: 11 }}>{s.message ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Recent app events</h2>
+      <p style={{ color: '#888', fontSize: 12, marginBottom: 16 }}>Showing last 500 from <code style={{ color: '#F5F5F5' }}>app_events</code>.</p>
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 16 }}>
         <input placeholder='Filter by event name (e.g. run_started)' value={filter} onChange={e => setFilter(e.target.value)} style={{ ...input, width: 320 }} />

@@ -1,13 +1,22 @@
-// [BUG-317 #4] Combined Tenants + Users view.
-// Tenants list with expandable rows that reveal the users in that tenant
-// inline. Both levels get search + sortable columns. Replaces the old
-// separate /tenants + /users pages; UsersPage is kept for the
-// ?tenant=<id> deep-link case from other surfaces.
+// [BUG-454] Tenants tab — rich per-tenant counters (cars, drivers, entries,
+// race_results, type) sourced from a single SQL aggregation. The
+// existing expand-to-show-users behaviour and delete action are kept.
 
 import { useEffect, useMemo, useState } from 'react'
 import { adminApi } from '../lib/adminApi'
 
-interface Tenant { id: string; name: string; created_at: string; user_count: number }
+interface Tenant {
+  id: string
+  name: string
+  type: string | null
+  created_at: string
+  users: number
+  cars: number
+  drivers: number
+  series_entries: number
+  race_results: number
+}
+
 interface User {
   id: string
   email: string
@@ -20,7 +29,7 @@ interface User {
 }
 
 type SortDir = 'asc' | 'desc'
-type TenantField = 'name' | 'user_count' | 'created_at'
+type TenantField = 'name' | 'type' | 'users' | 'cars' | 'drivers' | 'series_entries' | 'race_results' | 'created_at'
 type UserField = 'email' | 'display_name' | 'created_at' | 'personas'
 
 function cmp(a: string | number, b: string | number, dir: SortDir): number {
@@ -31,10 +40,12 @@ function cmp(a: string | number, b: string | number, dir: SortDir): number {
 }
 
 function sortTenants(rows: Tenant[], field: TenantField, dir: SortDir): Tenant[] {
-  const val = (t: Tenant): string | number =>
-    field === 'created_at' ? new Date(t.created_at).getTime() :
-    field === 'user_count' ? (t.user_count ?? 0) :
-    (t.name ?? '').toLowerCase()
+  const val = (t: Tenant): string | number => {
+    if (field === 'created_at') return new Date(t.created_at).getTime()
+    if (field === 'name') return (t.name ?? '').toLowerCase()
+    if (field === 'type') return (t.type ?? '').toLowerCase()
+    return Number((t as unknown as Record<string, number>)[field] ?? 0)
+  }
   return [...rows].sort((a, b) => cmp(val(a), val(b), dir))
 }
 
@@ -63,16 +74,48 @@ function filterUsers(rows: User[], q: string): User[] {
   )
 }
 
+const TENANTS_SQL = `
+  SELECT
+    t.id,
+    t.name,
+    t.type,
+    t.created_at,
+    COUNT(DISTINCT p.id)::int  as users,
+    COUNT(DISTINCT c.id)::int  as cars,
+    COUNT(DISTINCT d.id)::int  as drivers,
+    COUNT(DISTINCT se.id)::int as series_entries,
+    COALESCE(rr_counts.race_results, 0)::int as race_results
+  FROM tenants t
+  LEFT JOIN profiles p        ON p.tenant_id = t.id
+  LEFT JOIN cars c            ON c.tenant_id = t.id
+  LEFT JOIN drivers d         ON d.tenant_id = t.id
+  LEFT JOIN series_entries se ON se.tenant_id = t.id
+  LEFT JOIN (
+    SELECT tenant_id, COUNT(*) as race_results
+    FROM race_results
+    GROUP BY tenant_id
+  ) rr_counts ON rr_counts.tenant_id = t.id
+  GROUP BY t.id, t.name, t.type, t.created_at, rr_counts.race_results
+  ORDER BY race_results DESC, t.created_at DESC
+`
+
+// Map raw t.type → friendly display.
+function typeLabel(t: string | null): string {
+  if (t === 'series') return '🏁 Series'
+  if (!t) return '👤 Driver/Team'
+  return t
+}
+
 export default function TenantsPage() {
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const [tenantSearch, setTenantSearch] = useState('')
-  const [tenantSortField, setTenantSortField] = useState<TenantField>('name')
-  const [tenantSortDir, setTenantSortDir] = useState<SortDir>('asc')
+  const [tenantSortField, setTenantSortField] = useState<TenantField>('race_results')
+  const [tenantSortDir, setTenantSortDir] = useState<SortDir>('desc')
 
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  // Users cached per tenant so expanding → collapsing → re-expanding doesn't refetch.
   const [usersByTenant, setUsersByTenant] = useState<Record<string, User[]>>({})
   const [usersLoading, setUsersLoading] = useState<Record<string, boolean>>({})
   const [userSearch, setUserSearch] = useState('')
@@ -81,10 +124,11 @@ export default function TenantsPage() {
 
   const loadTenants = () => {
     setLoading(true)
-    adminApi.getAllTenants().then((data) => {
-      setTenants(data ?? [])
-      setLoading(false)
-    })
+    setError(null)
+    adminApi.selectRows<Tenant>(TENANTS_SQL)
+      .then((rows) => setTenants(rows))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false))
   }
   useEffect(() => { loadTenants() }, [])
 
@@ -117,7 +161,11 @@ export default function TenantsPage() {
 
   const toggleTenantSort = (f: TenantField) => {
     if (tenantSortField === f) setTenantSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    else { setTenantSortField(f); setTenantSortDir(f === 'user_count' || f === 'created_at' ? 'desc' : 'asc') }
+    else {
+      setTenantSortField(f)
+      const numericFields: TenantField[] = ['users', 'cars', 'drivers', 'series_entries', 'race_results', 'created_at']
+      setTenantSortDir(numericFields.includes(f) ? 'desc' : 'asc')
+    }
   }
   const toggleUserSort = (f: UserField) => {
     if (userSortField === f) setUserSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -131,6 +179,12 @@ export default function TenantsPage() {
 
   const input = { background: '#141414', border: '1px solid #2A2A2A', borderRadius: 4, padding: '8px 12px', color: '#F5F5F5', fontSize: 13, outline: 'none' } as const
   const btnGhost = { background: 'none', border: '1px solid #2A2A2A', color: '#F5F5F5', cursor: 'pointer', fontSize: 11, padding: '3px 10px', borderRadius: 4 } as const
+
+  const numCell = (n: number, highlight = false) => (
+    <td style={{ padding: '10px 12px', color: highlight && n > 0 ? '#DC2626' : '#F5F5F5', fontWeight: highlight ? 600 : 400, fontFamily: 'monospace', fontSize: 12 }}>
+      {n.toLocaleString('en-NZ')}
+    </td>
+  )
 
   return (
     <div data-testid='tenants-page'>
@@ -152,7 +206,9 @@ export default function TenantsPage() {
         </span>
       </div>
 
-      {loading ? (
+      {error ? (
+        <div style={{ color: '#DC2626', padding: 16, background: '#141414', border: '1px solid #DC262640', borderRadius: 6 }}>{error}</div>
+      ) : loading ? (
         <div style={{ color: '#888' }}>Loading...</div>
       ) : visibleTenants.length === 0 ? (
         <div style={{ color: '#888', padding: 40, textAlign: 'center' }}>
@@ -163,9 +219,14 @@ export default function TenantsPage() {
           <thead>
             <tr>
               <th style={{ width: 24 }} />
-              {sortableTh('Name',    'name',       tenantSortField, tenantSortDir, toggleTenantSort)}
-              {sortableTh('Users',   'user_count', tenantSortField, tenantSortDir, toggleTenantSort)}
-              {sortableTh('Created', 'created_at', tenantSortField, tenantSortDir, toggleTenantSort)}
+              {sortableTh('Tenant Name',    'name',           tenantSortField, tenantSortDir, toggleTenantSort)}
+              {sortableTh('Type',           'type',           tenantSortField, tenantSortDir, toggleTenantSort)}
+              {sortableTh('Users',          'users',          tenantSortField, tenantSortDir, toggleTenantSort)}
+              {sortableTh('Cars',           'cars',           tenantSortField, tenantSortDir, toggleTenantSort)}
+              {sortableTh('Drivers',        'drivers',        tenantSortField, tenantSortDir, toggleTenantSort)}
+              {sortableTh('Series Entries', 'series_entries', tenantSortField, tenantSortDir, toggleTenantSort)}
+              {sortableTh('Race Results',   'race_results',   tenantSortField, tenantSortDir, toggleTenantSort)}
+              {sortableTh('Joined',         'created_at',     tenantSortField, tenantSortDir, toggleTenantSort)}
               <th style={{ textAlign: 'left', padding: '8px 12px', color: '#888', fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #2A2A2A' }}>
                 Actions
               </th>
@@ -186,7 +247,12 @@ export default function TenantsPage() {
                   >
                     <td style={{ padding: '10px 12px', color: '#888' }}>{expanded ? '▾' : '▸'}</td>
                     <td style={{ padding: '10px 12px', fontWeight: 500 }}>{t.name}</td>
-                    <td style={{ padding: '10px 12px', color: '#DC2626', fontWeight: 600 }}>{t.user_count}</td>
+                    <td style={{ padding: '10px 12px', color: '#888', fontSize: 12 }}>{typeLabel(t.type)}</td>
+                    {numCell(t.users)}
+                    {numCell(t.cars)}
+                    {numCell(t.drivers)}
+                    {numCell(t.series_entries)}
+                    {numCell(t.race_results, true)}
                     <td style={{ padding: '10px 12px', color: '#888' }}>{new Date(t.created_at).toLocaleDateString('en-NZ')}</td>
                     <td style={{ padding: '10px 12px' }} onClick={(e) => e.stopPropagation()}>
                       <button
@@ -200,7 +266,7 @@ export default function TenantsPage() {
                   {expanded && (
                     <tr key={`${t.id}-users`} data-testid={`tenant-users-${t.id}`}>
                       <td />
-                      <td colSpan={4} style={{ padding: '0 12px 16px' }}>
+                      <td colSpan={9} style={{ padding: '0 12px 16px' }}>
                         <div style={{ background: '#0D0D0D', border: '1px solid #2A2A2A', borderRadius: 6, padding: 12 }}>
                           <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10 }}>
                             <input
