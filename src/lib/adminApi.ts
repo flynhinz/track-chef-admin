@@ -163,15 +163,23 @@ export const adminApi = {
   deleteBuildBug: (id: string) => callAdmin('delete_build_bug', { id }),
   recentEvents: (p?: { limit?: number; event_name?: string; tenant_id?: string }) => callAdmin('recent_events', p ?? {}),
   usageStats: (): Promise<{ dau: number; wau: number; mau: number; top_events_7d: { name: string; count: number }[]; top_pages_7d: { name: string; count: number }[] }> => callAdmin('usage_stats'),
-  runSql: (sql: string): Promise<{ kind: 'rows'; rows: Record<string, unknown>[] } | { kind: 'command'; command: string; affected: number } | { kind: 'error'; error: string; sqlstate?: string }> => callAdmin('run_sql', { sql }),
+  // [BUG-519] The admin_run_sql RPC misclassifies a leading-whitespace
+  // SELECT as a "command" because its first-word detection uses
+  // btrim(sql_text) — Postgres btrim with no args only strips spaces,
+  // not newlines/tabs. Template-literal SQL ("`\n  SELECT ...`") then
+  // returns {kind:'command', affected:N} with no rows. Trim every SQL
+  // here so the RPC's first-word match always sees SELECT/WITH/etc.
+  runSql: (sql: string): Promise<{ kind: 'rows'; rows: Record<string, unknown>[] } | { kind: 'command'; command: string; affected: number } | { kind: 'error'; error: string; sqlstate?: string }> => callAdmin('run_sql', { sql: sql.trim() }),
   // [BUG-454] Thin SELECT wrapper for the new tab dashboards.
   // [BUG-514] Tolerate the multiple response shapes the run_sql EF can
   // produce (legacy {kind:'rows',rows:[...]}, plain {rows:[...]},
   // PostgREST-style {data:[...]}, or just an array). Anything else gets
   // logged + thrown with the raw payload so the next regression is
   // diagnosable from the browser console without guessing.
+  // [BUG-519] Trim leading whitespace before sending — see runSql.
   selectRows: async <T = Record<string, unknown>>(sql: string): Promise<T[]> => {
-    const r: unknown = await callAdmin('run_sql', { sql })
+    const trimmed = sql.trim()
+    const r: unknown = await callAdmin('run_sql', { sql: trimmed })
     if (Array.isArray(r)) return r as T[]
     if (r && typeof r === 'object') {
       const o = r as Record<string, unknown>
@@ -179,8 +187,16 @@ export const adminApi = {
       if (Array.isArray(o.rows)) return o.rows as T[]
       if (Array.isArray(o.data)) return o.data as T[]
       if (Array.isArray(o.result)) return o.result as T[]
+      // [BUG-519] If we still get a 'command' back for a SELECT, the
+      // RPC's first-word detection has fallen through (e.g. starts
+      // with a comment). Surface what happened — the next regression
+      // should be diagnosable without guessing.
+      if (o.kind === 'command') {
+        console.error('[selectRows] RPC classified SELECT as command. SQL first chars:', JSON.stringify(trimmed.slice(0, 40)))
+        throw new Error('SQL misclassified as command — first token is not SELECT/WITH/SHOW/EXPLAIN/VALUES/TABLE')
+      }
     }
-    console.error('[selectRows] unexpected SQL response shape:', r, 'sql:', sql)
+    console.error('[selectRows] unexpected SQL response shape:', r, 'sql:', trimmed.slice(0, 200))
     throw new Error('Unexpected SQL response')
   },
   reportTestRun: (p: { build_ref: string; kind: 'unit' | 'regression' | 'e2e'; total: number; passed: number; failed: number; skipped?: number; commit_hash?: string; details_url?: string }) => callAdmin('report_test_run', p),
