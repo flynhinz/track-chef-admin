@@ -1,9 +1,12 @@
 // [BUG-454] Tenants tab — rich per-tenant counters (cars, drivers, entries,
 // race_results, type) sourced from a single SQL aggregation. The
 // existing expand-to-show-users behaviour and delete action are kept.
+// [BUG-537] "Add Series Coordinator" modal lives here too — the only
+// supported path for provisioning a coordinator going forward.
 
 import { useEffect, useMemo, useState } from 'react'
 import { adminApi } from '../lib/adminApi'
+import AddCoordinatorModal from './AddCoordinatorModal'
 
 interface Tenant {
   id: string
@@ -110,6 +113,9 @@ export default function TenantsPage() {
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // [BUG-537] Add-coordinator modal — open + last-success banner.
+  const [addOpen, setAddOpen] = useState(false)
+  const [coordOk, setCoordOk] = useState<{ name: string; email: string; recovery_link: string | null; warnings: string[] } | null>(null)
 
   const [tenantSearch, setTenantSearch] = useState('')
   const [tenantSortField, setTenantSortField] = useState<TenantField>('race_results')
@@ -188,10 +194,51 @@ export default function TenantsPage() {
 
   return (
     <div data-testid='tenants-page'>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>Tenants & Users</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, gap: 16 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0 }}>Tenants & Users</h1>
+        <button
+          type='button'
+          data-testid='add-coordinator-btn'
+          onClick={() => { setAddOpen(true); setCoordOk(null) }}
+          style={{ background: '#DC2626', border: 'none', color: '#F5F5F5', cursor: 'pointer', fontSize: 13, padding: '8px 16px', borderRadius: 4, fontWeight: 600 }}
+        >
+          + Add Series Coordinator
+        </button>
+      </div>
       <p style={{ color: '#888', fontSize: 14, marginBottom: 16 }}>
         {tenants.length} tenants across the platform. Click a row to expand its users.
       </p>
+
+      {coordOk && (
+        <div data-testid='coord-success' style={{ background: '#141414', border: '1px solid #16A34A40', borderRadius: 6, padding: 12, marginBottom: 16, fontSize: 12, color: '#F5F5F5' }}>
+          <div style={{ color: '#16A34A', fontWeight: 600, marginBottom: 4 }}>
+            ✓ Coordinator provisioned: {coordOk.name} &lt;{coordOk.email}&gt;
+          </div>
+          <div style={{ color: '#888' }}>
+            A password-reset email is on its way. If they don't see it, paste the link below into a chat:
+          </div>
+          {coordOk.recovery_link && (
+            <code style={{ display: 'block', marginTop: 6, padding: 8, background: '#0D0D0D', borderRadius: 4, fontSize: 11, wordBreak: 'break-all' }}>
+              {coordOk.recovery_link}
+            </code>
+          )}
+          {coordOk.warnings.length > 0 && (
+            <div style={{ marginTop: 8, color: '#D97706' }}>
+              Warnings: {coordOk.warnings.join(' · ')}
+            </div>
+          )}
+        </div>
+      )}
+
+      <AddCoordinatorModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onSuccess={(result) => {
+          setCoordOk(result)
+          setAddOpen(false)
+          loadTenants()
+        }}
+      />
 
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 12 }}>
         <input

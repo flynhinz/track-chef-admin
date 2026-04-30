@@ -155,6 +155,12 @@ export const adminApi = {
   deleteTenant: (tenantId: string) => callAdmin('delete_tenant', { tenant_id: tenantId }),
   createUser: (p: { email: string; display_name: string; tenant_id: string | null; password: string; must_reset: boolean }) => callAdmin('create_user', p),
   resetPassword: (p: { user_id: string; password: string; must_reset: boolean }) => callAdmin('reset_password', p),
+  // [BUG-537] One-shot series-coordinator provisioning. The EF
+  // creates / repairs the auth user, tenant, profile, user_roles,
+  // and emails a recovery link via Resend. Returns the recovery link
+  // so the admin can copy it manually if the email queue is down.
+  createCoordinator: (p: { name: string; email: string; series_id?: string | null }): Promise<{ success: boolean; user_id: string; tenant_id: string; recovery_link: string | null; warnings: string[] }> =>
+    callAdmin('create_coordinator', p),
   listBuilds: (): Promise<Build[]> => callAdmin('list_builds'),
   upsertBuild: (p: { id?: string; build_ref: string; title: string; notes?: string; status?: string }) => callAdmin('upsert_build', p),
   deleteBuild: (id: string) => callAdmin('delete_build', { id }),
