@@ -24,6 +24,7 @@ interface SeedPreset {
   date_from: string
   date_to: string
   notes?: string
+  source?: 'curated' | 'history'
 }
 
 // [BUG-447 v2] Auto-tick logic uses BRAND-TOKEN matching, not
@@ -101,6 +102,10 @@ export default function SeriesSeederNewJobPage() {
 
   const [tenants, setTenants] = useState<TenantRow[]>([])
   const [tenantSeries, setTenantSeries] = useState<SeriesRow[]>([])
+  // [BUG-517] Previously-attempted imports surfaced as additional presets
+  // so the dropdown grows as the seeder is used — coordinator no longer
+  // capped at the 10 baked-in entries. Pulled from series_import_jobs.
+  const [historyPresets, setHistoryPresets] = useState<SeedPreset[]>([])
 
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<TestResult | null>(null)
@@ -128,6 +133,41 @@ export default function SeriesSeederNewJobPage() {
     })()
   }, [])
 
+  // [BUG-517] Load historical import jobs as additional presets. Newest
+  // first; deduped by (series_name + group + date window). Skips junk
+  // probe rows ("__test__"). Curated PRESETS still win on dupe.
+  useEffect(() => {
+    void (async () => {
+      const { data, error } = await (supabase as any)
+        .from('series_import_jobs')
+        .select('series_name, speedhive_group_name, date_from, date_to, status, created_at')
+        .order('created_at', { ascending: false })
+        .limit(200)
+      if (error) { console.warn('[seeder] history load failed', error); return }
+      const seen = new Set<string>()
+      const curatedKeys = new Set(
+        PRESETS.map((p) => `${p.series_name}|${p.speedhive_group_name}|${p.date_from}|${p.date_to}`),
+      )
+      const out: SeedPreset[] = []
+      for (const row of (data ?? []) as { series_name: string | null; speedhive_group_name: string | null; date_from: string | null; date_to: string | null; status: string | null }[]) {
+        if (!row.series_name || !row.speedhive_group_name || !row.date_from || !row.date_to) continue
+        if (row.series_name.startsWith('__test__')) continue
+        const key = `${row.series_name}|${row.speedhive_group_name}|${row.date_from}|${row.date_to}`
+        if (seen.has(key) || curatedKeys.has(key)) continue
+        seen.add(key)
+        out.push({
+          series_name: row.series_name,
+          speedhive_group_name: row.speedhive_group_name,
+          date_from: row.date_from,
+          date_to: row.date_to,
+          notes: row.status ?? undefined,
+          source: 'history',
+        })
+      }
+      setHistoryPresets(out)
+    })()
+  }, [])
+
   // Series list scoped to chosen tenant — refresh when tenant changes.
   useEffect(() => {
     if (!targetTenantId || isNewTenant) { setTenantSeries([]); return }
@@ -142,12 +182,27 @@ export default function SeriesSeederNewJobPage() {
     })()
   }, [targetTenantId, isNewTenant])
 
+  // [BUG-517] Single combined list — curated PRESETS first, then any
+  // historical imports loaded from series_import_jobs. Indexed so the
+  // <select> value is just a position into this array.
+  const allPresets = useMemo<SeedPreset[]>(
+    () => [...PRESETS.map((p) => ({ ...p, source: 'curated' as const })), ...historyPresets],
+    [historyPresets],
+  )
+
   // [BUG-450] Picking a preset only fills the fields — nothing is
   // probed until the coordinator clicks Find Groups. Lets them
   // adjust dates or the group input first without each change
   // firing a request.
+  // [BUG-517] '__custom__' clears every field so the coordinator can
+  // type a brand-new series freely from a known reset state.
   const applyPreset = (idx: string) => {
-    const p = PRESETS[Number(idx)]
+    if (idx === '__custom__') {
+      setSeriesName(''); setGroupName(''); setDateFrom(''); setDateTo('')
+      setTestResult(null); setSelectedGroups([])
+      return
+    }
+    const p = allPresets[Number(idx)]
     if (!p) return
     setSeriesName(p.series_name)
     setGroupName(p.speedhive_group_name)
@@ -326,7 +381,12 @@ export default function SeriesSeederNewJobPage() {
         </div>
 
         <div style={styles.section}>
-          <label style={styles.label}>Quick preset</label>
+          <label style={styles.label}>
+            Quick preset
+            <span style={{ fontSize: 11, color: tokens.muted, marginLeft: 8, fontWeight: 400 }}>
+              ({PRESETS.length} curated · {historyPresets.length} from history) — or type any series in the fields below
+            </span>
+          </label>
           <select
             style={styles.select}
             data-testid="seeder-preset"
@@ -334,11 +394,23 @@ export default function SeriesSeederNewJobPage() {
             onChange={(e) => applyPreset(e.target.value)}
           >
             <option value="">Pick a known series…</option>
-            {PRESETS.map((p, i) => (
-              <option key={i} value={String(i)}>
-                {p.series_name}{p.notes ? ` · ${p.notes}` : ''}
-              </option>
-            ))}
+            <option value="__custom__">+ Custom (clear fields, type freely below)</option>
+            <optgroup label="Curated">
+              {PRESETS.map((p, i) => (
+                <option key={`c-${i}`} value={String(i)}>
+                  {p.series_name}{p.notes ? ` · ${p.notes}` : ''}
+                </option>
+              ))}
+            </optgroup>
+            {historyPresets.length > 0 && (
+              <optgroup label="Previously imported">
+                {historyPresets.map((p, i) => (
+                  <option key={`h-${i}`} value={String(PRESETS.length + i)}>
+                    {p.series_name} · {p.date_from?.slice(0, 7)} → {p.date_to?.slice(0, 7)}{p.notes ? ` · ${p.notes}` : ''}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
 
