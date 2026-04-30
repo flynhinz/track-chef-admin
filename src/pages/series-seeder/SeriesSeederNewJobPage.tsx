@@ -213,6 +213,11 @@ export default function SeriesSeederNewJobPage() {
   }
 
   const canTest = !!groupName.trim() && !!dateFrom && !!dateTo
+  // [BUG-518] Browse mode requires only the date window — the EF
+  // probes every event in that range and returns every group name
+  // seen, so the coordinator can discover series without knowing the
+  // Speedhive group name up-front.
+  const canBrowse = !!dateFrom && !!dateTo
   const newTenantValid = !!newTenantName.trim() && !!newTenantEmail.trim() && newTenantPassword.length >= 6
   // Discovery cannot start until the coordinator has confirmed at
   // least one Speedhive group from the scoring screen — without that
@@ -228,8 +233,12 @@ export default function SeriesSeederNewJobPage() {
     [seriesName, canTest, targetTenantId, isNewTenant, newTenantValid, emailTo, selectedGroups],
   )
 
-  const testConnection = async () => {
-    if (!canTest) return
+  // [BUG-518] When browse=true, group name isn't required — we send a
+  // wildcard so the EF still scores but no group is filtered out, and
+  // every Speedhive group seen in the window comes back in
+  // scored_groups for the coordinator to tick.
+  const testConnection = async (browse = false) => {
+    if (browse ? !canBrowse : !canTest) return
     setTesting(true)
     setErrorMsg(null)
     setOkMsg(null)
@@ -239,20 +248,21 @@ export default function SeriesSeederNewJobPage() {
         ? (tenants[0]?.id ?? '')
         : targetTenantId
       if (!tenantForProbe) throw new Error('No tenants available — pick one or load tenants')
+      const probeGroupName = browse ? '*' : groupName
       const { data: tempJob, error: insErr } = await (supabase as any)
         .from('series_import_jobs')
         .insert({
           tenant_id: tenantForProbe,
           target_tenant_id: tenantForProbe,
-          series_name: `__test__ ${seriesName || groupName}`,
-          speedhive_group_name: groupName,
+          series_name: `__test__ ${seriesName || probeGroupName}`,
+          speedhive_group_name: probeGroupName,
           date_from: dateFrom,
           date_to: dateTo,
           email_to: emailTo,
           status: 'discovering',
           // [BUG-451] EF reads only_known_circuits from staged_data
           // for both test_connection and discover.
-          staged_data: { only_known_circuits: onlyKnownCircuits },
+          staged_data: { only_known_circuits: onlyKnownCircuits, browse_mode: browse },
         })
         .select('id')
         .single()
@@ -270,7 +280,10 @@ export default function SeriesSeederNewJobPage() {
       // case-insensitive. Catches every Speedhive naming variant for a
       // brand without per-name maintenance. Falls back to top-scored
       // single group if no brand tokens are extractable from the input.
-      const brands = brandTokens(groupName)
+      // [BUG-518] In browse mode the brand-tick heuristic is meaningless
+      // (no brand input), so leave selectedGroups empty — coordinator
+      // ticks what they want from the full list.
+      const brands = browse ? [] : brandTokens(groupName)
       const brandMatches = brands.length > 0
         ? result.scored_groups
             .filter((g) =>
@@ -282,13 +295,17 @@ export default function SeriesSeederNewJobPage() {
         : []
       if (brandMatches.length > 0) {
         setSelectedGroups(brandMatches)
-      } else {
+      } else if (!browse) {
         const top = result.scored_groups?.[0]
         setSelectedGroups(top && top.score >= 60 ? [top.name] : [])
+      } else {
+        setSelectedGroups([])
       }
       const candCount = result.scored_groups?.length ?? 0
       if (candCount === 0) {
         setErrorMsg(`No groups found in ${result.events_in_window} event(s). Check date window or Speedhive availability.`)
+      } else if (browse) {
+        setOkMsg(`Found ${candCount} group(s) across ${result.events_in_window} event(s) — tick the ones you want to import`)
       } else if (brandMatches.length > 0) {
         setOkMsg(`Auto-selected ${brandMatches.length} group(s) matching "${brands.join(', ')}" — review and adjust below`)
       } else {
@@ -455,15 +472,35 @@ export default function SeriesSeederNewJobPage() {
           </span>
         </label>
 
-        <button
-          type="button"
-          data-testid="seeder-test"
-          onClick={testConnection}
-          disabled={!canTest || testing}
-          style={{ ...styles.btn, ...((!canTest || testing) ? styles.btnDisabled : {}), width: '100%' }}
-        >
-          {testing ? 'Scanning…' : 'Find groups'}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            type="button"
+            data-testid="seeder-test"
+            onClick={() => testConnection(false)}
+            disabled={!canTest || testing}
+            style={{ ...styles.btn, ...((!canTest || testing) ? styles.btnDisabled : {}), flex: 1 }}
+          >
+            {testing ? 'Scanning…' : 'Find groups'}
+          </button>
+          {/* [BUG-518] Discover everything in the date window without
+              needing a group name — surfaces every series Speedhive
+              has so the coordinator can pick from a real list. */}
+          <button
+            type="button"
+            data-testid="seeder-browse"
+            onClick={() => testConnection(true)}
+            disabled={!canBrowse || testing}
+            title={canBrowse ? 'Probe every event in this window and list every group seen' : 'Pick a date range first'}
+            style={{ ...styles.btnGhost, ...((!canBrowse || testing) ? styles.btnDisabled : {}), flex: 1 }}
+          >
+            {testing ? '…' : 'Browse what’s available →'}
+          </button>
+        </div>
+        <p style={{ fontSize: 11, color: tokens.muted, margin: 0 }}>
+          Don’t know the group name? Pick a date range and hit
+          <strong> Browse what’s available</strong> to see every series
+          Speedhive has in that window.
+        </p>
 
         {/* Wait indicator — same pattern as Status page's 'discovering'
             badge: accent badge + muted explanation line. */}
