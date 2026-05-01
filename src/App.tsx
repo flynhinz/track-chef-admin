@@ -21,11 +21,16 @@ import SeriesSeederNewJobPage from './pages/series-seeder/SeriesSeederNewJobPage
 import SeriesSeederStatusPage from './pages/series-seeder/SeriesSeederStatusPage'
 import SeriesSeederReviewPage from './pages/series-seeder/SeriesSeederReviewPage'
 import SeriesSeederCompletePage from './pages/series-seeder/SeriesSeederCompletePage'
-// [EPIC-240] Cleanup wizard — Steps 6/7/8 (round numbers, classes, names).
+// [EPIC-240] Cleanup wizard — Steps 1-8.
 import CleanupHomePage from './pages/cleanup/CleanupHomePage'
 import RoundNumbersPage from './pages/cleanup/RoundNumbersPage'
 import SeriesClassesPage from './pages/cleanup/SeriesClassesPage'
 import EventNamesPage from './pages/cleanup/EventNamesPage'
+import DeduplicateSeriesPage from './pages/cleanup/DeduplicateSeriesPage'
+import NormaliseClassesPage from './pages/cleanup/NormaliseClassesPage'
+import LinkCircuitsPage from './pages/cleanup/LinkCircuitsPage'
+import MarkFinalisedPage from './pages/cleanup/MarkFinalisedPage'
+import EmailCompletenessPage from './pages/cleanup/EmailCompletenessPage'
 import TopNav from './components/TopNav'
 import BuildInfo from './components/BuildInfo'
 
@@ -126,6 +131,11 @@ export default function App() {
           {/* [EPIC-240] Cleanup wizard — gated to super admin since it
               writes to events / series_classes across all tenants. */}
           <Route path='/cleanup' element={<SuperAdminRoute><AdminLayout><CleanupHomePage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/cleanup/deduplicate-series' element={<SuperAdminRoute><AdminLayout><DeduplicateSeriesPage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/cleanup/normalise-classes' element={<SuperAdminRoute><AdminLayout><NormaliseClassesPage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/cleanup/link-circuits' element={<SuperAdminRoute><AdminLayout><LinkCircuitsPage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/cleanup/mark-finalised' element={<SuperAdminRoute><AdminLayout><MarkFinalisedPage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/cleanup/email-completeness' element={<SuperAdminRoute><AdminLayout><EmailCompletenessPage /></AdminLayout></SuperAdminRoute>} />
           <Route path='/cleanup/round-numbers' element={<SuperAdminRoute><AdminLayout><RoundNumbersPage /></AdminLayout></SuperAdminRoute>} />
           <Route path='/cleanup/series-classes' element={<SuperAdminRoute><AdminLayout><SeriesClassesPage /></AdminLayout></SuperAdminRoute>} />
           <Route path='/cleanup/event-names' element={<SuperAdminRoute><AdminLayout><EventNamesPage /></AdminLayout></SuperAdminRoute>} />
