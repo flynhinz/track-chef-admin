@@ -176,6 +176,16 @@ export const adminApi = {
   // returns {kind:'command', affected:N} with no rows. Trim every SQL
   // here so the RPC's first-word match always sees SELECT/WITH/etc.
   runSql: (sql: string): Promise<{ kind: 'rows'; rows: Record<string, unknown>[] } | { kind: 'command'; command: string; affected: number } | { kind: 'error'; error: string; sqlstate?: string }> => callAdmin('run_sql', { sql: sql.trim() }),
+  // [EPIC-240] Run an UPDATE / INSERT through the same admin_run_sql
+  // RPC that selectRows uses. Returns the affected row count.
+  // Throws if the RPC returns kind:'error'.
+  runMutation: async (sql: string): Promise<number> => {
+    const r: any = await callAdmin('run_sql', { sql: sql.trim() })
+    if (r?.kind === 'error') throw new Error(String(r.error ?? 'SQL error'))
+    if (r?.kind === 'command') return Number(r.affected ?? 0)
+    if (r?.kind === 'rows') return Array.isArray(r.rows) ? r.rows.length : 0
+    throw new Error('Unexpected mutation response')
+  },
   // [BUG-454] Thin SELECT wrapper for the new tab dashboards.
   // [BUG-514] Tolerate the multiple response shapes the run_sql EF can
   // produce (legacy {kind:'rows',rows:[...]}, plain {rows:[...]},

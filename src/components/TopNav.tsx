@@ -40,6 +40,8 @@ export default function TopNav() {
           {navItem('/debug', 'Debug')}
           {/* [EPIC-211] Series Seeder — Speedhive discovery + staging + import. */}
           {navItem('/series-seeder', 'Series Seeder')}
+          {/* [EPIC-240] Cleanup wizard — round numbers, series classes, event names. */}
+          {navItem('/cleanup', 'Cleanup')}
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>

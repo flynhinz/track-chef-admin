@@ -21,6 +21,11 @@ import SeriesSeederNewJobPage from './pages/series-seeder/SeriesSeederNewJobPage
 import SeriesSeederStatusPage from './pages/series-seeder/SeriesSeederStatusPage'
 import SeriesSeederReviewPage from './pages/series-seeder/SeriesSeederReviewPage'
 import SeriesSeederCompletePage from './pages/series-seeder/SeriesSeederCompletePage'
+// [EPIC-240] Cleanup wizard — Steps 6/7/8 (round numbers, classes, names).
+import CleanupHomePage from './pages/cleanup/CleanupHomePage'
+import RoundNumbersPage from './pages/cleanup/RoundNumbersPage'
+import SeriesClassesPage from './pages/cleanup/SeriesClassesPage'
+import EventNamesPage from './pages/cleanup/EventNamesPage'
 import TopNav from './components/TopNav'
 import BuildInfo from './components/BuildInfo'
 
@@ -118,6 +123,12 @@ export default function App() {
           <Route path='/sql' element={<SuperAdminRoute><AdminLayout><SqlPage /></AdminLayout></SuperAdminRoute>} />
           <Route path='/debug' element={<SuperAdminRoute><AdminLayout><DebugConsolePage /></AdminLayout></SuperAdminRoute>} />
           {/* [EPIC-211] Series Seeder — writes prod data, gated on SuperAdminRoute. */}
+          {/* [EPIC-240] Cleanup wizard — gated to super admin since it
+              writes to events / series_classes across all tenants. */}
+          <Route path='/cleanup' element={<SuperAdminRoute><AdminLayout><CleanupHomePage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/cleanup/round-numbers' element={<SuperAdminRoute><AdminLayout><RoundNumbersPage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/cleanup/series-classes' element={<SuperAdminRoute><AdminLayout><SeriesClassesPage /></AdminLayout></SuperAdminRoute>} />
+          <Route path='/cleanup/event-names' element={<SuperAdminRoute><AdminLayout><EventNamesPage /></AdminLayout></SuperAdminRoute>} />
           <Route path='/series-seeder' element={<SuperAdminRoute><AdminLayout><SeriesSeederNewJobPage /></AdminLayout></SuperAdminRoute>} />
           <Route path='/series-seeder/:jobId' element={<SuperAdminRoute><AdminLayout><SeriesSeederStatusPage /></AdminLayout></SuperAdminRoute>} />
           <Route path='/series-seeder/:jobId/review' element={<SuperAdminRoute><AdminLayout><SeriesSeederReviewPage /></AdminLayout></SuperAdminRoute>} />
