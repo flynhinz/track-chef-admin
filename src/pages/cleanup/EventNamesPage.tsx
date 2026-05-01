@@ -96,16 +96,25 @@ export default function EventNamesPage() {
       .finally(() => setLoading(false))
   }
 
-  // Build groups keyed by derived_class (or "__unknown__") with the
-  // canonical class as the suggested suffix. If a series_classes row
-  // matches the derived value (case-insensitive, normalised), we use
+  // Build groups keyed by derived_class (or the existing suffix as a
+  // fallback for events with no entries linked yet). If a series_classes
+  // row matches the derived value (case-insensitive, normalised), we use
   // the canonical spelling; otherwise the derived label itself.
+  // [EPIC-240 follow-up] Fall back to existingSuffix(name) when the
+  // event has no series_entries — keeps admins from having to type a
+  // suffix for orphan events that already have a sensible one.
   const groups = useMemo<Group[]>(() => {
     const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim()
     const canon = new Map<string, string>(classes.map((c) => [norm(c.label), c.label]))
+    const resolveKey = (e: EventRow): string => {
+      if (e.derived_class) return canon.get(norm(e.derived_class)) ?? e.derived_class
+      const sfx = existingSuffix(e.name)
+      if (sfx) return canon.get(norm(sfx)) ?? sfx
+      return '__unknown__'
+    }
     const m = new Map<string, EventRow[]>()
     for (const e of events) {
-      const k = e.derived_class ? canon.get(norm(e.derived_class)) ?? e.derived_class : '__unknown__'
+      const k = resolveKey(e)
       if (!m.has(k)) m.set(k, [])
       m.get(k)!.push(e)
     }
